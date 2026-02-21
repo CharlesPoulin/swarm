@@ -1,0 +1,17 @@
+version: '3'
+
+tasks:
+  install:
+    desc: Install claude-swarm to ~/bin and update PATH
+    cmds:
+      - mkdir -p ~/bin
+      - mv claude-swarm ~/bin/claude-swarm
+      - chmod +x ~/bin/claude-swarm
+      - |
+        if ! grep -q 'export PATH="$HOME/bin:$PATH"' ~/.bashrc; then
+          echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+          echo "Added ~/bin to PATH in ~/.bashrc"
+        else
+          echo "~/bin already in PATH"
+        fi
+      - echo "Run 'source ~/.bashrc' or open a new terminal to apply PATH changes"
