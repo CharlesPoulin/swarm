@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# claude-swarm: Spawn N Claude Code instances in git worktrees inside tmux
+# Usage: claude-swarm [-n NUM] [-s SESSION] [-b BASE_BRANCH]
+set -euo pipefail
+
+# ── Defaults ────────────────────────────────────────────────────────────────
+NUM=4
+SESSION="claude-swarm"
+BASE_BRANCH=""          # empty = current branch
+WORKTREE_PREFIX=".wt"   # worktrees live at .wt-1, .wt-2, …
+
+# ── Parse args ──────────────────────────────────────────────────────────────
+usage() {
+  echo "Usage: $(basename "$0") [-n NUM] [-s SESSION] [-b BRANCH]"
+  echo "  -n NUM     Number of Claude instances (default: $NUM)"
+  echo "  -s SESSION tmux session name        (default: $SESSION)"
+  echo "  -b BRANCH  Base branch for worktrees (default: current branch)"
+  exit 1
+}
+
+while getopts ":n:s:b:h" opt; do
+  case $opt in
+    n) NUM="$OPTARG" ;;
+    s) SESSION="$OPTARG" ;;
+    b) BASE_BRANCH="$OPTARG" ;;
+    h) usage ;;
+    *) echo "Unknown option: -$OPTARG"; usage ;;
+  esac
+done
+
+# ── Sanity checks ────────────────────────────────────────────────────────────
+if ! git rev-parse --git-dir &>/dev/null; then
+  echo "❌  Not inside a git repository." >&2; exit 1
+fi
+
+if ! command -v tmux &>/dev/null; then
+  echo "❌  tmux not found. Install it first." >&2; exit 1
+fi
+
+if ! command -v claude &>/dev/null; then
+  echo "❌  claude (Claude Code CLI) not found. Install it first." >&2; exit 1
+fi
+
+re='^[1-9][0-9]*$'
+if ! [[ $NUM =~ $re ]]; then
+  echo "❌  -n must be a positive integer." >&2; exit 1
+fi
+
+# ── Resolve repo info ────────────────────────────────────────────────────────
+REPO_ROOT=$(git rev-parse --show-toplevel)
+[[ -z "$BASE_BRANCH" ]] && BASE_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse HEAD)
+
+echo "🌳  Repo   : $REPO_ROOT"
+echo "🌿  Branch : $BASE_BRANCH"
+echo "🤖  Instances: $NUM"
+echo "📺  Session : $SESSION"
+echo ""
+
+# ── Kill existing session (clean restart) ────────────────────────────────────
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "⚠️   Session '$SESSION' already exists — killing it."
+  tmux kill-session -t "$SESSION"
+fi
+
+# ── Create worktrees ─────────────────────────────────────────────────────────
+WORKTREE_DIRS=()
+
+cleanup() {
+  echo ""
+  echo "🧹  Cleaning up worktrees…"
+  for dir in "${WORKTREE_DIRS[@]}"; do
+    if [[ -d "$dir" ]]; then
+      git worktree remove --force "$dir" 2>/dev/null || true
+    fi
+  done
+  git worktree prune 2>/dev/null || true
+}
+trap cleanup EXIT
+
+for i in $(seq 1 "$NUM"); do
+  WT_DIR="$REPO_ROOT/${WORKTREE_PREFIX}-${i}"
+  WT_BRANCH="swarm/${BASE_BRANCH}/worker-${i}"
+
+  # Remove stale worktree/branch if they exist
+  if [[ -d "$WT_DIR" ]]; then
+    git worktree remove --force "$WT_DIR" 2>/dev/null || true
+  fi
+  git branch -D "$WT_BRANCH" 2>/dev/null || true
+
+  git worktree add -b "$WT_BRANCH" "$WT_DIR" "$BASE_BRANCH" -q
+  WORKTREE_DIRS+=("$WT_DIR")
+  echo "✅  Worktree $i → $WT_DIR  (branch: $WT_BRANCH)"
+done
+
+echo ""
+echo "🚀  Launching tmux session…"
+
+# ── Build tmux session ───────────────────────────────────────────────────────
+STATUS_BAR="#[bg=colour235,fg=colour245] Swarm: ${NUM} workers  \
+#[fg=colour39]Alt+1-9#[fg=colour245]:switch  \
+#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  \
+#[fg=colour39]Ctrl+b x#[fg=colour245]:kill tab  \
+#[fg=colour39]Ctrl+b [#[fg=colour245]:scroll  \
+#[fg=colour39]q#[fg=colour245]:exit scroll"
+
+# Start session with first window
+tmux new-session -d -s "$SESSION" -c "${WORKTREE_DIRS[0]}" -x 220 -y 50
+
+# Configure status bar
+tmux set-option -t "$SESSION" status on
+tmux set-option -t "$SESSION" status-position bottom
+tmux set-option -t "$SESSION" status-style "bg=colour235,fg=colour245"
+tmux set-option -t "$SESSION" status-left "#[bg=colour33,fg=colour15,bold] 🤖 SWARM #[bg=colour235] "
+tmux set-option -t "$SESSION" status-left-length 20
+tmux set-option -t "$SESSION" status-right "$STATUS_BAR"
+tmux set-option -t "$SESSION" status-right-length 120
+tmux set-option -t "$SESSION" window-status-format "#[fg=colour245] #I:#W "
+tmux set-option -t "$SESSION" window-status-current-format "#[bg=colour33,fg=colour15,bold] #I:#W "
+
+# Bind Alt+number for quick window switching
+for n in $(seq 1 9); do
+  tmux bind-key -t "$SESSION" -n "M-${n}" select-window -t "${n}"  2>/dev/null || \
+  tmux bind-key -n "M-${n}" select-window -t "${n}"
+done
+
+# Rename first window and launch claude
+tmux rename-window -t "${SESSION}:1" "worker-1"
+tmux send-keys -t "${SESSION}:1" "claude" Enter
+
+# Create remaining windows
+for i in $(seq 2 "$NUM"); do
+  tmux new-window -t "$SESSION" -c "${WORKTREE_DIRS[$((i-1))]}" -n "worker-${i}"
+  tmux send-keys -t "${SESSION}:${i}" "claude" Enter
+done
+
+# Go back to window 1
+tmux select-window -t "${SESSION}:1"
+
+# ── Attach ───────────────────────────────────────────────────────────────────
+echo "✅  All $NUM Claude instances launched!"
+echo "📎  Attaching to session '$SESSION'…"
+echo "    Detach anytime with: Ctrl+b  d"
+echo ""
+
+# Disable the EXIT trap while attached (user manually cleans up)
+trap - EXIT
+
+tmux attach-session -t "$SESSION"
+
+# ── Post-detach cleanup prompt ───────────────────────────────────────────────
+echo ""
+read -rp "🧹  Remove worktrees and swarm branches? [Y/n] " answer
+answer="${answer:-Y}"
+if [[ "$answer" =~ ^[Yy]$ ]]; then
+  for dir in "${WORKTREE_DIRS[@]}"; do
+    branch=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || true)
+    git worktree remove --force "$dir" 2>/dev/null || true
+    [[ -n "$branch" ]] && git branch -D "$branch" 2>/dev/null || true
+  done
+  git worktree prune
+  echo "✅  Cleaned up."
+else
+  echo "ℹ️   Worktrees kept. Remove manually with: git worktree remove <path>"
+fi
