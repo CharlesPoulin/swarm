@@ -1,3 +1,3 @@
 add gemini cli
 add easy setup
-add more optimized sidebar lazy git it was good but i can be better
+add hub window: nvim (left) + lazygit (right) with Ctrl+b g/e shortcuts ✅
