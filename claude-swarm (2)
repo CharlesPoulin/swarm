@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# claude-swarm: Spawn N Claude Code instances in git worktrees inside tmux
-# Usage: claude-swarm [-n NUM] [-s SESSION] [-b BASE_BRANCH]
+# claude-swarm: Spawn N AI CLI instances in git worktrees inside tmux
+# Usage: claude-swarm [-n NUM] [-s SESSION] [-b BASE_BRANCH] [-t claude|gemini|codex]
 set -euo pipefail
 
 # ── Defaults ────────────────────────────────────────────────────────────────
@@ -8,21 +8,27 @@ NUM=4
 SESSION="claude-swarm"
 BASE_BRANCH=""          # empty = current branch
 WORKTREE_PREFIX=".wt"   # worktrees live at .wt-1, .wt-2, …
+CLI_TYPE="claude"       # AI CLI to launch: claude, gemini, or codex
+ADD_MODE=0              # 1 = append workers to existing session
 
 # ── Parse args ──────────────────────────────────────────────────────────────
 usage() {
-  echo "Usage: $(basename "$0") [-n NUM] [-s SESSION] [-b BRANCH]"
-  echo "  -n NUM     Number of Claude instances (default: $NUM)"
+  echo "Usage: $(basename "$0") [-n NUM] [-s SESSION] [-b BRANCH] [-t claude|gemini|codex] [-a]"
+  echo "  -n NUM     Number of AI instances   (default: $NUM)"
   echo "  -s SESSION tmux session name        (default: $SESSION)"
   echo "  -b BRANCH  Base branch for worktrees (default: current branch)"
+  echo "  -t TYPE    AI CLI to use: claude|gemini|codex (default: $CLI_TYPE)"
+  echo "  -a         Add workers to an existing session instead of restarting"
   exit 1
 }
 
-while getopts ":n:s:b:h" opt; do
+while getopts ":n:s:b:t:ah" opt; do
   case $opt in
     n) NUM="$OPTARG" ;;
     s) SESSION="$OPTARG" ;;
     b) BASE_BRANCH="$OPTARG" ;;
+    t) CLI_TYPE="$OPTARG" ;;
+    a) ADD_MODE=1 ;;
     h) usage ;;
     *) echo "Unknown option: -$OPTARG"; usage ;;
   esac
@@ -37,8 +43,13 @@ if ! command -v tmux &>/dev/null; then
   echo "❌  tmux not found. Install it first." >&2; exit 1
 fi
 
-if ! command -v claude &>/dev/null; then
-  echo "❌  claude (Claude Code CLI) not found. Install it first." >&2; exit 1
+case "$CLI_TYPE" in
+  claude|gemini|codex) ;;
+  *) echo "❌  Unknown CLI type: '$CLI_TYPE'. Use claude, gemini, or codex." >&2; exit 1 ;;
+esac
+
+if ! command -v "$CLI_TYPE" &>/dev/null; then
+  echo "❌  $CLI_TYPE not found. Install it first." >&2; exit 1
 fi
 
 re='^[1-9][0-9]*$'
@@ -52,9 +63,56 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 
 echo "🌳  Repo   : $REPO_ROOT"
 echo "🌿  Branch : $BASE_BRANCH"
-echo "🤖  Instances: $NUM"
+echo "🤖  Instances: $NUM  (CLI: $CLI_TYPE)"
 echo "📺  Session : $SESSION"
 echo ""
+
+# ── Add mode: append workers to an existing session ──────────────────────────
+if [[ $ADD_MODE -eq 1 ]]; then
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    echo "❌  Session '$SESSION' not found. Start a swarm first (without -a)." >&2
+    exit 1
+  fi
+
+  # Find the highest existing window index
+  MAX_WIN=$(tmux list-windows -t "$SESSION" -F "#{window_index}" | sort -n | tail -1)
+  START_IDX=$((MAX_WIN + 1))
+
+  NEW_DIRS=()
+  cleanup_new() {
+    echo ""
+    echo "🧹  Cleaning up new worktrees…"
+    for dir in "${NEW_DIRS[@]}"; do
+      [[ -d "$dir" ]] && git worktree remove --force "$dir" 2>/dev/null || true
+    done
+    git worktree prune 2>/dev/null || true
+  }
+  trap cleanup_new EXIT
+
+  for i in $(seq "$START_IDX" $((START_IDX + NUM - 1))); do
+    WT_DIR="$REPO_ROOT/${WORKTREE_PREFIX}-${i}"
+    WT_BRANCH="swarm/${BASE_BRANCH}/worker-${i}"
+    [[ -d "$WT_DIR" ]] && git worktree remove --force "$WT_DIR" 2>/dev/null || true
+    git branch -D "$WT_BRANCH" 2>/dev/null || true
+    git worktree add -b "$WT_BRANCH" "$WT_DIR" "$BASE_BRANCH" -q
+    NEW_DIRS+=("$WT_DIR")
+    echo "✅  Worktree ${i} → $WT_DIR  (branch: $WT_BRANCH)"
+  done
+
+  echo ""
+  for i in $(seq "$START_IDX" $((START_IDX + NUM - 1))); do
+    WT_DIR="$REPO_ROOT/${WORKTREE_PREFIX}-${i}"
+    tmux new-window -t "$SESSION" -c "$WT_DIR" -n "worker-${i}"
+    tmux send-keys -t "${SESSION}:${i}" "$CLI_TYPE" Enter
+  done
+
+  tmux select-window -t "${SESSION}:${START_IDX}"
+  trap - EXIT
+
+  echo "✅  Added $NUM ${CLI_TYPE} worker(s) to session '$SESSION'."
+  echo "    Attach with: tmux attach -t '$SESSION'"
+  exit 0
+fi
 
 # ── Kill existing session (clean restart) ────────────────────────────────────
 if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -98,6 +156,7 @@ echo "🚀  Launching tmux session…"
 # ── Build tmux session ───────────────────────────────────────────────────────
 STATUS_BAR="#[bg=colour235,fg=colour245] Swarm: ${NUM} workers  \
 #[fg=colour39]Alt+1-9#[fg=colour245]:switch  \
+#[fg=colour39]Ctrl+b +#[fg=colour245]:add worker  \
 #[fg=colour39]Ctrl+b d#[fg=colour245]:detach  \
 #[fg=colour39]Ctrl+b x#[fg=colour245]:kill tab  \
 #[fg=colour39]Ctrl+b [#[fg=colour245]:scroll  \
@@ -110,8 +169,8 @@ tmux new-session -d -s "$SESSION" -c "${WORKTREE_DIRS[0]}" -x 220 -y 50
 tmux set-option -t "$SESSION" status on
 tmux set-option -t "$SESSION" status-position bottom
 tmux set-option -t "$SESSION" status-style "bg=colour235,fg=colour245"
-tmux set-option -t "$SESSION" status-left "#[bg=colour33,fg=colour15,bold] 🤖 SWARM #[bg=colour235] "
-tmux set-option -t "$SESSION" status-left-length 20
+tmux set-option -t "$SESSION" status-left "#[bg=colour33,fg=colour15,bold] 🤖 SWARM (${CLI_TYPE}) #[bg=colour235] "
+tmux set-option -t "$SESSION" status-left-length 30
 tmux set-option -t "$SESSION" status-right "$STATUS_BAR"
 tmux set-option -t "$SESSION" status-right-length 120
 tmux set-option -t "$SESSION" window-status-format "#[fg=colour245] #I:#W "
@@ -123,21 +182,32 @@ for n in $(seq 1 9); do
   tmux bind-key -n "M-${n}" select-window -t "${n}"
 done
 
-# Rename first window and launch claude
+# Bind Alt++ to add a new worker on the fly (values baked in at session-creation time)
+ADD_ONE="idx=\$(tmux list-windows -t '${SESSION}' -F '#{window_index}' | sort -n | tail -1); \
+idx=\$((idx+1)); \
+wt='${REPO_ROOT}/${WORKTREE_PREFIX}-'\$idx; \
+br='swarm/${BASE_BRANCH}/worker-'\$idx; \
+git -C '${REPO_ROOT}' worktree add -b \"\$br\" \"\$wt\" '${BASE_BRANCH}' -q && \
+tmux new-window -t '${SESSION}' -c \"\$wt\" -n \"worker-\$idx\" && \
+tmux send-keys -t '${SESSION}':\$idx '${CLI_TYPE}' Enter && \
+tmux display-message \"✅ Worker \$idx added\""
+tmux bind-key "+" run-shell "$ADD_ONE"
+
+# Rename first window and launch AI CLI
 tmux rename-window -t "${SESSION}:1" "worker-1"
-tmux send-keys -t "${SESSION}:1" "claude" Enter
+tmux send-keys -t "${SESSION}:1" "$CLI_TYPE" Enter
 
 # Create remaining windows
 for i in $(seq 2 "$NUM"); do
   tmux new-window -t "$SESSION" -c "${WORKTREE_DIRS[$((i-1))]}" -n "worker-${i}"
-  tmux send-keys -t "${SESSION}:${i}" "claude" Enter
+  tmux send-keys -t "${SESSION}:${i}" "$CLI_TYPE" Enter
 done
 
 # Go back to window 1
 tmux select-window -t "${SESSION}:1"
 
 # ── Attach ───────────────────────────────────────────────────────────────────
-echo "✅  All $NUM Claude instances launched!"
+echo "✅  All $NUM ${CLI_TYPE} instances launched!"
 echo "📎  Attaching to session '$SESSION'…"
 echo "    Detach anytime with: Ctrl+b  d"
 echo ""
