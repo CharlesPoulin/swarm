@@ -268,6 +268,11 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 	_ = tmux.BindKey(cfg.Session, "-n", "M-2",
 		fmt.Sprintf("select-window -t '%s:hub'", cfg.Session))
 
+	// Ctrl+b S → confirm then ship: open PR + cleanup for current worktree
+	_ = tmux.BindKey(cfg.Session, "", "S",
+		"confirm-before -p \"Ship this worktree as a PR? (y/n)\" "+
+			"\"new-window -c '#{pane_current_path}' 'claude-swarm ship; echo; read -p \\\"Press Enter to close…\\\"'\"")
+
 	// Ctrl+b e → nvim, Ctrl+b g → lazygit
 	_ = tmux.BindKey(cfg.Session, "", "e",
 		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
