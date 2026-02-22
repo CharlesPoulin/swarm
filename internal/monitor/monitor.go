@@ -12,8 +12,9 @@ import (
 )
 
 // Watch polls a tmux window for API usage-limit errors and automatically resumes.
+// windowID is the stable tmux @N identifier (does not change on rename).
 // It runs until ctx is cancelled.
-func Watch(ctx context.Context, cfg *config.Config, session string, windowIdx, workerNum int, log *os.File) {
+func Watch(ctx context.Context, cfg *config.Config, session, windowID string, workerNum int, log *os.File) {
 	interval := time.Duration(cfg.MonitorInterval) * time.Second
 	detected := false
 
@@ -32,7 +33,7 @@ func Watch(ctx context.Context, cfg *config.Config, session string, windowIdx, w
 		case <-time.After(interval):
 		}
 
-		target := fmt.Sprintf("%s:%d", session, windowIdx)
+		target := fmt.Sprintf("%s:%s", session, windowID)
 		content, err := tmux.CapturePane(target)
 		if err != nil {
 			// Session or window gone — exit silently.

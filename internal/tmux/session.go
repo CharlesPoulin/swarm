@@ -25,9 +25,24 @@ func KillSession(session string) error {
 }
 
 // NewSession creates a detached session; the first window starts in cwd at the given dimensions.
-func NewSession(session, cwd string, width, height int) error {
-	return run("new-session", "-d", "-s", session, "-c", cwd,
-		"-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height))
+// windowName is applied to the initial window at creation time (avoids index assumptions).
+func NewSession(session, cwd string, width, height int, windowName string) error {
+	args := []string{"new-session", "-d", "-s", session, "-c", cwd,
+		"-x", fmt.Sprintf("%d", width), "-y", fmt.Sprintf("%d", height)}
+	if windowName != "" {
+		args = append(args, "-n", windowName)
+	}
+	return run(args...)
+}
+
+// GetWindowID returns the stable @N window ID for a target (e.g. "session:worker-1").
+// The @ID does not change when the window is renamed, so it is safe to use as a long-lived target.
+func GetWindowID(target string) (string, error) {
+	out, err := exec.Command("tmux", "display-message", "-t", target, "-p", "#{window_id}").Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message -t %s: %w", target, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // NewWindow creates a new named window at index idx inside session, starting in cwd.

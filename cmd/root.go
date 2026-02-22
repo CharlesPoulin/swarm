@@ -165,16 +165,17 @@ func addWorkers(cfg *config.Config, repoRoot string) error {
 	fmt.Println()
 	for i := startIdx; i < startIdx+cfg.Num; i++ {
 		wtDir := filepath.Join(repoRoot, fmt.Sprintf("%s-%d", cfg.WorktreePrefix, i))
-		if err := tmux.NewWindowNoIndex(cfg.Session, wtDir, fmt.Sprintf("worker-%d", i)); err != nil {
+		name := fmt.Sprintf("worker-%d", i)
+		if err := tmux.NewWindowNoIndex(cfg.Session, wtDir, name); err != nil {
 			return err
 		}
-		target := fmt.Sprintf("%s:%d", cfg.Session, i)
+		target := fmt.Sprintf("%s:%s", cfg.Session, name)
 		if err := tmux.SendKeys(target, cfg.CLIType); err != nil {
 			return err
 		}
 	}
 
-	if err := tmux.SelectWindow(fmt.Sprintf("%s:%d", cfg.Session, startIdx)); err != nil {
+	if err := tmux.SelectWindow(fmt.Sprintf("%s:worker-%d", cfg.Session, startIdx)); err != nil {
 		return err
 	}
 
@@ -215,8 +216,8 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	hasLazygit := commandExists("lazygit")
 	hasNvim := commandExists("nvim")
 
-	// ── Create session ────────────────────────────────────────────────────────
-	if err := tmux.NewSession(cfg.Session, repoRoot, 220, 50); err != nil {
+	// ── Create session (initial window named "hub" at creation to avoid base-index issues) ──
+	if err := tmux.NewSession(cfg.Session, repoRoot, 220, 50, "hub"); err != nil {
 		return err
 	}
 
@@ -251,21 +252,21 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 		_ = tmux.SetOption(cfg.Session, k, v)
 	}
 
-	// ── Hub window (window 0) ─────────────────────────────────────────────────
-	_ = tmux.RenameWindow(fmt.Sprintf("%s:0", cfg.Session), "hub")
+	// ── Hub window — named "hub" at session creation; target by name, never by index ──
+	hub := fmt.Sprintf("%s:hub", cfg.Session)
 
 	if hasNvim {
-		_ = tmux.SendKeys(fmt.Sprintf("%s:0", cfg.Session), "nvim .")
+		_ = tmux.SendKeys(hub, "nvim .")
 	} else {
-		_ = tmux.SendKeys(fmt.Sprintf("%s:0", cfg.Session), "echo 'nvim not found — install it for editor support'")
+		_ = tmux.SendKeys(hub, "echo 'nvim not found — install it for editor support'")
 	}
 
 	if hasLazygit {
-		_ = tmux.SplitWindow(fmt.Sprintf("%s:0", cfg.Session), repoRoot, 40, true)
-		_ = tmux.SendKeys(fmt.Sprintf("%s:0.1", cfg.Session), "lazygit")
+		_ = tmux.SplitWindow(hub, repoRoot, 40, true)
+		_ = tmux.SendKeys(hub+".1", "lazygit")
 		_ = tmux.SetOption(cfg.Session, "pane-border-style", "fg=colour238")
 		_ = tmux.SetOption(cfg.Session, "pane-active-border-style", "fg=colour39")
-		_ = tmux.SelectPane(fmt.Sprintf("%s:0.0", cfg.Session))
+		_ = tmux.SelectPane(hub + ".0")
 	} else {
 		fmt.Println("⚠️   lazygit not found — hub will open without git pane.")
 	}
@@ -274,23 +275,23 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	if hasLazygit {
 		_ = tmux.BindKey(cfg.Session, "",
 			"g",
-			fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s:0.1'\"", cfg.Session, cfg.Session),
+			fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s:hub.1'\"", cfg.Session, cfg.Session),
 		)
 	}
 	_ = tmux.BindKey(cfg.Session, "",
 		"e",
-		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s:0.0'\"", cfg.Session, cfg.Session),
+		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s:hub.0'\"", cfg.Session, cfg.Session),
 	)
 
-	// Alt+0 → hub
+	// Alt+0 → hub (by name, not index)
 	_ = tmux.BindKey(cfg.Session, "-n", "M-0",
-		fmt.Sprintf("select-window -t '%s:0'", cfg.Session),
+		fmt.Sprintf("select-window -t '%s:hub'", cfg.Session),
 	)
 
-	// Alt+1-9 → worker windows
+	// Alt+1-9 → worker windows (by name, not index)
 	for n := 1; n <= 9; n++ {
 		_ = tmux.BindKey(cfg.Session, "-n", fmt.Sprintf("M-%d", n),
-			fmt.Sprintf("select-window -t '%s:%d'", cfg.Session, n),
+			fmt.Sprintf("select-window -t '%s:worker-%d'", cfg.Session, n),
 		)
 	}
 
@@ -302,31 +303,39 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 		fmt.Sprintf(`br='swarm/%s/worker-'$idx`, cfg.BaseBranch),
 		fmt.Sprintf(`git -C '%s' worktree add -b "$br" "$wt" '%s' -q`, repoRoot, cfg.BaseBranch),
 		fmt.Sprintf(`tmux new-window -t '%s' -c "$wt" -n "worker-$idx"`, cfg.Session),
-		fmt.Sprintf(`tmux send-keys -t '%s':$idx '%s' Enter`, cfg.Session, cfg.CLIType),
+		fmt.Sprintf(`tmux send-keys -t '%s:worker-'$idx '%s' Enter`, cfg.Session, cfg.CLIType),
 		fmt.Sprintf(`tmux display-message "✅ Worker $idx added"`),
 	}, " && ")
 	_ = tmux.BindKey(cfg.Session, "", "+", fmt.Sprintf("run-shell \"%s\"", addOneScript))
 
-	// ── Worker windows ────────────────────────────────────────────────────────
+	// ── Worker windows — created by name; @ID captured for stable monitor targeting ──
+	windowIDs := make([]string, cfg.Num)
 	for i := 1; i <= cfg.Num; i++ {
-		if err := tmux.NewWindow(cfg.Session, worktreeDirs[i-1], fmt.Sprintf("worker-%d", i), i); err != nil {
+		name := fmt.Sprintf("worker-%d", i)
+		if err := tmux.NewWindowNoIndex(cfg.Session, worktreeDirs[i-1], name); err != nil {
 			return err
 		}
-		target := fmt.Sprintf("%s:%d", cfg.Session, i)
+		target := fmt.Sprintf("%s:%s", cfg.Session, name)
 		if err := tmux.SendKeys(target, cfg.CLIType); err != nil {
 			return err
 		}
+		// Capture stable @ID so monitor targeting survives window renames.
+		id, err := tmux.GetWindowID(target)
+		if err != nil {
+			return fmt.Errorf("getting window ID for %s: %w", name, err)
+		}
+		windowIDs[i-1] = id
 	}
 
-	// Select worker-1 on attach.
-	_ = tmux.SelectWindow(fmt.Sprintf("%s:1", cfg.Session))
+	// Select worker-1 on attach (by name).
+	_ = tmux.SelectWindow(fmt.Sprintf("%s:worker-1", cfg.Session))
 
 	// ── Start monitors ────────────────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	for i := 1; i <= cfg.Num; i++ {
-		go monitor.Watch(ctx, cfg, cfg.Session, i, i, logFile)
+		go monitor.Watch(ctx, cfg, cfg.Session, windowIDs[i-1], i, logFile)
 	}
 
 	// ── Attach (blocks until detach) ──────────────────────────────────────────
