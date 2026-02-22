@@ -141,6 +141,11 @@ func GetPaneID(target string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// SetPaneTitle sets the title shown in the pane border (requires pane-border-status to be enabled).
+func SetPaneTitle(paneID, title string) error {
+	return run("select-pane", "-t", paneID, "-T", title)
+}
+
 // ListWindowIndices returns all window indices in the session, sorted ascending.
 func ListWindowIndices(session string) ([]int, error) {
 	out, err := exec.Command("tmux", "list-windows", "-t", session, "-F", "#{window_index}").Output()

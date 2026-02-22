@@ -11,10 +11,9 @@ import (
 	"github.com/cpoulin/claude-swarm/internal/usagelimit"
 )
 
-// Watch polls a tmux window for API usage-limit errors and automatically resumes.
-// windowID is the stable tmux @N identifier (does not change on rename).
-// It runs until ctx is cancelled.
-func Watch(ctx context.Context, cfg *config.Config, session, windowID string, workerNum int, log *os.File) {
+// Watch polls a pane for API usage-limit errors and automatically resumes.
+// paneID is the stable %N tmux pane identifier.
+func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, log *os.File) {
 	interval := time.Duration(cfg.MonitorInterval) * time.Second
 	detected := false
 
@@ -33,11 +32,9 @@ func Watch(ctx context.Context, cfg *config.Config, session, windowID string, wo
 		case <-time.After(interval):
 		}
 
-		target := fmt.Sprintf("%s:%s", session, windowID)
-		content, err := tmux.CapturePane(target)
+		content, err := tmux.CapturePane(paneID)
 		if err != nil {
-			// Session or window gone — exit silently.
-			return
+			return // pane gone
 		}
 
 		if !detected && usagelimit.HasError(content) {
@@ -45,16 +42,14 @@ func Watch(ctx context.Context, cfg *config.Config, session, windowID string, wo
 
 			waitSecs := usagelimit.ExtractWaitSecs(content)
 			totalSecs := waitSecs + cfg.ResumeBufferSec
-
 			displayH := totalSecs / 3600
 			displayM := (totalSecs % 3600) / 60
 
 			logf("[worker-%d] API usage limit hit. Resuming in %dh %dm.", workerNum, displayH, displayM)
 
-			windowName := fmt.Sprintf("w%d[wait %dh%dm]", workerNum, displayH, displayM)
-			_ = tmux.RenameWindow(target, windowName)
+			title := fmt.Sprintf("worker-%d [wait %dh%dm]", workerNum, displayH, displayM)
+			_ = tmux.SetPaneTitle(paneID, title)
 
-			// Sleep in small increments so we can respond to cancellation.
 			deadline := time.Now().Add(time.Duration(totalSecs) * time.Second)
 			for time.Now().Before(deadline) {
 				select {
@@ -64,15 +59,14 @@ func Watch(ctx context.Context, cfg *config.Config, session, windowID string, wo
 				}
 			}
 
-			// Check session still alive before resuming.
 			if !tmux.HasSession(session) {
 				return
 			}
 
 			logf("[worker-%d] Resuming with %s --continue.", workerNum, cfg.CLIType)
-			_ = tmux.SendKeys(target, cfg.CLIType+" --continue")
-			_ = tmux.RenameWindow(target, fmt.Sprintf("worker-%d", workerNum))
-			detected = false // reset so future limits are caught
+			_ = tmux.SendKeys(paneID, cfg.CLIType+" --continue")
+			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", workerNum))
+			detected = false
 		}
 	}
 }
