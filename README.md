@@ -41,7 +41,7 @@ Put defaults in `~/.claude-swarm.yaml` so you don't have to retype flags:
 
 ```yaml
 num: 3
-cli_type: claude
+cli_type: claude,claude,claude,gemini
 cli_flags: ""
 session: myswarm
 resume_buffer_secs: 120   # extra wait after usage-limit expires
