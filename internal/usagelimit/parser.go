@@ -8,11 +8,13 @@ import (
 
 var (
 	errorRe = regexp.MustCompile(
-		`(?i)(exceeded your usage limit|usage limits.{0,60}try again after|rate limit.{0,60}retry after)`,
+		`(?i)(exceeded your usage limit|exceeded your current quota|insufficient.{0,10}quota|usage limits.{0,60}try again after|rate limit.{0,60}retry after)`,
 	)
 	utcTimeRe = regexp.MustCompile(`(?i)after (\d+):(\d+) UTC`)
 	hoursRe   = regexp.MustCompile(`(?i)in (\d+) hours?`)
 	minsRe    = regexp.MustCompile(`(?i)(\d+) minutes?`)
+	secsRe    = regexp.MustCompile(`(?i)in (\d+) seconds?`)
+	shortRe   = regexp.MustCompile(`(?i)in (\d+)m(\d+)s`)
 )
 
 // HasError reports whether text contains an API usage-limit message.
@@ -35,6 +37,20 @@ func ExtractWaitSecs(text string) int {
 		}
 		secs := int(target.Sub(now).Seconds())
 		if secs > 0 {
+			return secs
+		}
+	}
+
+	// OpenAI short format: "in 1m30s"
+	if m := shortRe.FindStringSubmatch(text); len(m) == 3 {
+		mins, _ := strconv.Atoi(m[1])
+		secs, _ := strconv.Atoi(m[2])
+		return mins*60 + secs
+	}
+
+	// OpenAI seconds format: "in X seconds"
+	if m := secsRe.FindStringSubmatch(text); len(m) == 2 {
+		if secs, _ := strconv.Atoi(m[1]); secs > 0 {
 			return secs
 		}
 	}
