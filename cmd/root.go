@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cpoulin/claude-swarm/internal/config"
 	"github.com/cpoulin/claude-swarm/internal/git"
@@ -101,6 +102,7 @@ func orchestrate(cfg *config.Config) error {
 		return err
 	}
 	workers := buildWorkers(cfg)
+	workers = normalizeWorkers(workers)
 
 	repoRoot, err := git.RepoRoot()
 	if err != nil {
@@ -407,6 +409,70 @@ func buildWorkers(cfg *config.Config) []string {
 		workers[i] = cliTypes[i%len(cliTypes)]
 	}
 	return workers
+}
+
+func normalizeWorkers(workers []string) []string {
+	if !containsCLIType(workers, "gemini") {
+		return workers
+	}
+	if geminiHealthCheck() {
+		return workers
+	}
+	fallback, ok := firstAvailableCLI("claude", "codex")
+	if !ok {
+		fmt.Println("⚠️   Gemini is installed but fails to start (likely Node.js runtime mismatch).")
+		fmt.Println("⚠️   No fallback CLI (claude/codex) was found, keeping gemini workers as-is.")
+		return workers
+	}
+	replaced := make([]string, len(workers))
+	replacedCount := 0
+	for i, cliType := range workers {
+		if cliType == "gemini" {
+			replaced[i] = fallback
+			replacedCount++
+		} else {
+			replaced[i] = cliType
+		}
+	}
+	fmt.Printf("⚠️   Gemini failed health check; replaced %d worker(s) with %s.\n", replacedCount, fallback)
+	fmt.Println("⚠️   Fix locally by upgrading Node.js and reinstalling @google/gemini-cli.")
+	return replaced
+}
+
+func containsCLIType(workers []string, cliType string) bool {
+	for _, worker := range workers {
+		if worker == cliType {
+			return true
+		}
+	}
+	return false
+}
+
+func firstAvailableCLI(cliTypes ...string) (string, bool) {
+	for _, cliType := range cliTypes {
+		if commandExists(cliType) {
+			return cliType, true
+		}
+	}
+	return "", false
+}
+
+func geminiHealthCheck() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gemini", "--version")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true
+	}
+	output := string(out)
+	if strings.Contains(output, "ReferenceError: File is not defined") {
+		return false
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return false
+	}
+	return false
 }
 
 func uniqueWorkerTypes(workers []string) []string {
