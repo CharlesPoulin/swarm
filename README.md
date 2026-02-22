@@ -31,7 +31,8 @@ That's it. You get:
 | `-n` | `4` | Number of workers |
 | `-s` | `claude-swarm` | tmux session name |
 | `-b` | current branch | Base branch for worktrees |
-| `-t` | `claude` | CLI: `claude`, `gemini`, or `codex` |
+| `-t` | `claude` | CLI: `claude`, `gemini`, or `codex` (or comma list like `claude,gemini,codex`) |
+| `--cli-flags` | `` | Extra flags passed to each worker CLI command |
 | `-a` | — | Add workers to a running session |
 
 ## Config file
@@ -41,6 +42,7 @@ Put defaults in `~/.claude-swarm.yaml` so you don't have to retype flags:
 ```yaml
 num: 3
 cli_type: claude
+cli_flags: ""
 session: myswarm
 resume_buffer_secs: 120   # extra wait after usage-limit expires
 monitor_interval: 30       # how often to check for usage-limit errors (secs)

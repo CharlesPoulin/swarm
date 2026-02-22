@@ -45,13 +45,15 @@ func init() {
 	f.IntP("num", "n", 0, "Number of AI instances (default: 4)")
 	f.StringP("session", "s", "", "tmux session name (default: claude-swarm)")
 	f.StringP("base-branch", "b", "", "Base branch for worktrees (default: current branch)")
-	f.StringP("type", "t", "", "AI CLI to use: claude|gemini|codex (default: claude)")
+	f.StringP("type", "t", "", "AI CLI(s) to use: claude|gemini|codex (or comma list, e.g. claude,gemini,codex)")
+	f.String("cli-flags", "", "Extra flags passed to each AI CLI command")
 	f.BoolP("add", "a", false, "Add workers to an existing session instead of restarting")
 
 	_ = viper.BindPFlag("num", f.Lookup("num"))
 	_ = viper.BindPFlag("session", f.Lookup("session"))
 	_ = viper.BindPFlag("base_branch", f.Lookup("base-branch"))
 	_ = viper.BindPFlag("cli_type", f.Lookup("type"))
+	_ = viper.BindPFlag("cli_flags", f.Lookup("cli-flags"))
 	_ = viper.BindPFlag("add_mode", f.Lookup("add"))
 }
 
@@ -74,13 +76,17 @@ func validate(cfg *config.Config) error {
 	if _, err := git.RepoRoot(); err != nil {
 		return fmt.Errorf("not inside a git repository")
 	}
-	switch cfg.CLIType {
-	case "claude", "gemini", "codex":
-	default:
-		return fmt.Errorf("unknown CLI type %q — use claude, gemini, or codex", cfg.CLIType)
+	cliTypes := parseCLITypes(cfg.CLIType)
+	if len(cliTypes) == 0 {
+		return fmt.Errorf("no valid CLI types provided")
 	}
-	if _, err := exec.LookPath(cfg.CLIType); err != nil {
-		return fmt.Errorf("%s not found — install it first", cfg.CLIType)
+	for _, cliType := range cliTypes {
+		if !isSupportedCLIType(cliType) {
+			return fmt.Errorf("unknown CLI type %q — use claude, gemini, or codex", cliType)
+		}
+		if _, err := exec.LookPath(cliType); err != nil {
+			return fmt.Errorf("%s not found — install it first", cliType)
+		}
 	}
 	if cfg.Num < 1 {
 		return fmt.Errorf("-n must be a positive integer")
@@ -94,6 +100,7 @@ func orchestrate(cfg *config.Config) error {
 	if err := validate(cfg); err != nil {
 		return err
 	}
+	workers := buildWorkers(cfg)
 
 	repoRoot, err := git.RepoRoot()
 	if err != nil {
@@ -115,27 +122,27 @@ func orchestrate(cfg *config.Config) error {
 
 	fmt.Printf("🌳  Repo    : %s\n", repoRoot)
 	fmt.Printf("🌿  Branch  : %s\n", cfg.BaseBranch)
-	fmt.Printf("🤖  Instances: %d  (CLI: %s)\n", cfg.Num, cfg.CLIType)
+	fmt.Printf("🤖  Instances: %d  (CLI mix: %s)\n", len(workers), strings.Join(uniqueWorkerTypes(workers), ","))
 	fmt.Printf("📺  Session : %s\n", cfg.Session)
 	fmt.Printf("📋  Log     : %s\n\n", logPath)
 
 	if cfg.AddMode {
-		return addWorkers(cfg, repoRoot)
+		return addWorkers(cfg, repoRoot, workers)
 	}
-	return startSwarm(cfg, repoRoot, logFile)
+	return startSwarm(cfg, repoRoot, workers, logFile)
 }
 
 // ── Start swarm ───────────────────────────────────────────────────────────────
 
-func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
+func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *os.File) error {
 	if tmux.HasSession(cfg.Session) {
 		fmt.Printf("⚠️   Session %q already exists — killing it.\n", cfg.Session)
 		_ = tmux.KillSession(cfg.Session)
 	}
 
 	// Create worktrees.
-	worktreeDirs := make([]string, cfg.Num)
-	for i := 1; i <= cfg.Num; i++ {
+	worktreeDirs := make([]string, len(workers))
+	for i := 1; i <= len(workers); i++ {
 		wtDir := filepath.Join(repoRoot, fmt.Sprintf("%s-%d", cfg.WorktreePrefix, i))
 		wtBranch := fmt.Sprintf("swarm/%s/worker-%d", cfg.BaseBranch, i)
 		_ = git.RemoveWorktree(wtDir)
@@ -144,7 +151,7 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 			return err
 		}
 		worktreeDirs[i-1] = wtDir
-		fmt.Printf("✅  Worktree %d → %s  (branch: %s)\n", i, wtDir, wtBranch)
+		fmt.Printf("✅  Worktree %d → %s  (branch: %s, CLI: %s)\n", i, wtDir, wtBranch, workers[i-1])
 	}
 
 	fmt.Println("\n🚀  Launching tmux session…")
@@ -159,8 +166,12 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	}
 
 	// ── Status bar ────────────────────────────────────────────────────────────
+	cliLabel := cfg.CLIType
+	if len(uniqueWorkerTypes(workers)) > 1 {
+		cliLabel = strings.Join(uniqueWorkerTypes(workers), ",")
+	}
 	statusLeft := fmt.Sprintf(
-		"#[bg=colour33,fg=colour15,bold] 🤖 SWARM (%s) #[bg=colour235] ", cfg.CLIType)
+		"#[bg=colour33,fg=colour15,bold] 🤖 SWARM (%s) #[bg=colour235] ", cliLabel)
 	statusRight := fmt.Sprintf(
 		"#[bg=colour235,fg=colour245] %d agents  "+
 			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
@@ -168,7 +179,7 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach",
-		cfg.Num)
+		len(workers))
 
 	for k, v := range map[string]string{
 		"status":                       "on",
@@ -200,15 +211,15 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	if err != nil {
 		return fmt.Errorf("getting initial pane ID: %w", err)
 	}
-	topRight, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[1%cfg.Num], 50, true)
+	topRight, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[1%len(workers)], 50, true)
 	if err != nil {
 		return fmt.Errorf("creating top-right pane: %w", err)
 	}
-	bottomLeft, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[2%cfg.Num], 50, false)
+	bottomLeft, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[2%len(workers)], 50, false)
 	if err != nil {
 		return fmt.Errorf("creating bottom-left pane: %w", err)
 	}
-	bottomRight, err := tmux.SplitWindowGetPaneID(topRight, worktreeDirs[3%cfg.Num], 50, false)
+	bottomRight, err := tmux.SplitWindowGetPaneID(topRight, worktreeDirs[3%len(workers)], 50, false)
 	if err != nil {
 		return fmt.Errorf("creating bottom-right pane: %w", err)
 	}
@@ -216,9 +227,9 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	workerPaneIDs := []string{topLeft, topRight, bottomLeft, bottomRight}
 
 	for i, paneID := range workerPaneIDs {
-		idx := i % cfg.Num
-		_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", i+1))
-		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cfg.CLIType))
+		idx := i % len(workers)
+		_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d (%s)", i+1, workers[idx]))
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx])))
 	}
 
 	_ = tmux.SelectPane(topLeft)
@@ -268,7 +279,7 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	// ── Attach (starts on swarm window) ──────────────────────────────────────
 	_ = tmux.SelectWindow(fmt.Sprintf("%s:swarm", cfg.Session))
 
-	fmt.Printf("✅  All %d %s instances launched!\n", cfg.Num, cfg.CLIType)
+	fmt.Printf("✅  All %d instances launched!\n", len(workers))
 	fmt.Printf("🔍  Monitors active (log: /tmp/claude-swarm-%s.log)\n", cfg.Session)
 	fmt.Printf("📎  Attaching to session %q…\n", cfg.Session)
 	fmt.Println("    Detach: Ctrl+b d  |  Hub: Alt+2  |  Agents: Alt+1")
@@ -278,7 +289,8 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for i, paneID := range workerPaneIDs {
-		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, logFile)
+		idx := i % len(workers)
+		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx]), logFile)
 	}
 
 	attachCmd := exec.Command("tmux", "attach-session", "-t", cfg.Session)
@@ -295,7 +307,7 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 
 // ── Add-mode ──────────────────────────────────────────────────────────────────
 
-func addWorkers(cfg *config.Config, repoRoot string) error {
+func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 	if !tmux.HasSession(cfg.Session) {
 		return fmt.Errorf("session %q not found — start a swarm first (without -a)", cfg.Session)
 	}
@@ -311,7 +323,8 @@ func addWorkers(cfg *config.Config, repoRoot string) error {
 	}
 	startIdx := i
 
-	for i := startIdx; i < startIdx+cfg.Num; i++ {
+	for j, cliType := range workers {
+		i := startIdx + j
 		wtDir := filepath.Join(repoRoot, fmt.Sprintf("%s-%d", cfg.WorktreePrefix, i))
 		wtBranch := fmt.Sprintf("swarm/%s/worker-%d", cfg.BaseBranch, i)
 		_ = git.RemoveWorktree(wtDir)
@@ -319,18 +332,18 @@ func addWorkers(cfg *config.Config, repoRoot string) error {
 		if err := git.AddWorktree(wtDir, wtBranch, cfg.BaseBranch); err != nil {
 			return err
 		}
-		fmt.Printf("✅  Worktree %d → %s  (branch: %s)\n", i, wtDir, wtBranch)
+		fmt.Printf("✅  Worktree %d → %s  (branch: %s, CLI: %s)\n", i, wtDir, wtBranch, cliType)
 
 		// Find the last pane in swarm window and split it.
 		newPane, err := tmux.SplitWindowGetPaneID(fmt.Sprintf("%s:swarm", cfg.Session), wtDir, 50, false)
 		if err != nil {
 			return fmt.Errorf("creating pane for worker %d: %w", i, err)
 		}
-		_ = tmux.SetPaneTitle(newPane, fmt.Sprintf("worker-%d", i))
-		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", wtDir, cfg.CLIType))
+		_ = tmux.SetPaneTitle(newPane, fmt.Sprintf("worker-%d (%s)", i, cliType))
+		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", wtDir, cliCmdFor(cfg, cliType)))
 	}
 
-	fmt.Printf("✅  Added %d worker(s) to session %q.\n", cfg.Num, cfg.Session)
+	fmt.Printf("✅  Added %d worker(s) to session %q.\n", len(workers), cfg.Session)
 	return nil
 }
 
@@ -364,4 +377,54 @@ func postDetachCleanup(cfg *config.Config, repoRoot string, worktreeDirs []strin
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+func isSupportedCLIType(cliType string) bool {
+	switch cliType {
+	case "claude", "gemini", "codex":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseCLITypes(raw string) []string {
+	parts := strings.Split(raw, ",")
+	cliTypes := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			cliTypes = append(cliTypes, trimmed)
+		}
+	}
+	return cliTypes
+}
+
+func buildWorkers(cfg *config.Config) []string {
+	cliTypes := parseCLITypes(cfg.CLIType)
+	workers := make([]string, cfg.Num)
+	for i := 0; i < cfg.Num; i++ {
+		workers[i] = cliTypes[i%len(cliTypes)]
+	}
+	return workers
+}
+
+func uniqueWorkerTypes(workers []string) []string {
+	seen := make(map[string]bool, len(workers))
+	ordered := make([]string, 0, len(workers))
+	for _, worker := range workers {
+		if !seen[worker] {
+			seen[worker] = true
+			ordered = append(ordered, worker)
+		}
+	}
+	return ordered
+}
+
+// cliCmdFor returns the full CLI invocation for a specific CLI type, including any extra flags.
+func cliCmdFor(cfg *config.Config, cliType string) string {
+	if cfg.CLIFlags == "" {
+		return cliType
+	}
+	return cliType + " " + cfg.CLIFlags
 }

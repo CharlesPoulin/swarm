@@ -13,7 +13,7 @@ import (
 
 // Watch polls a pane for API usage-limit errors and automatically resumes.
 // paneID is the stable %N tmux pane identifier.
-func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, log *os.File) {
+func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, cliCmd string, log *os.File) {
 	interval := time.Duration(cfg.MonitorInterval) * time.Second
 	detected := false
 
@@ -63,8 +63,8 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 				return
 			}
 
-			logf("[worker-%d] Resuming with %s --continue.", workerNum, cfg.CLIType)
-			_ = tmux.SendKeys(paneID, cfg.CLIType+" --continue")
+			logf("[worker-%d] Resuming with %s --continue.", workerNum, cliCmd)
+			_ = tmux.SendKeys(paneID, cliCmd+" --continue")
 			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", workerNum))
 			detected = false
 		}

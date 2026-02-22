@@ -9,6 +9,7 @@ type Config struct {
 	Session         string `mapstructure:"session"`
 	BaseBranch      string `mapstructure:"base_branch"`
 	CLIType         string `mapstructure:"cli_type"`
+	CLIFlags        string `mapstructure:"cli_flags"`
 	AddMode         bool   `mapstructure:"add_mode"`
 	ResumeBufferSec int    `mapstructure:"resume_buffer_secs"`
 	MonitorInterval int    `mapstructure:"monitor_interval"`
@@ -21,6 +22,7 @@ func SetDefaults() {
 	viper.SetDefault("session", "claude-swarm")
 	viper.SetDefault("base_branch", "")
 	viper.SetDefault("cli_type", "claude")
+	viper.SetDefault("cli_flags", "")
 	viper.SetDefault("add_mode", false)
 	viper.SetDefault("resume_buffer_secs", 120)
 	viper.SetDefault("monitor_interval", 30)
