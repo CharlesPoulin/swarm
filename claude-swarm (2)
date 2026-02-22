@@ -11,6 +11,11 @@ WORKTREE_PREFIX=".wt"   # worktrees live at .wt-1, .wt-2, …
 CLI_TYPE="claude"       # AI CLI to launch: claude, gemini, or codex
 ADD_MODE=0              # 1 = append workers to existing session
 
+# ── Usage-limit resume settings ──────────────────────────────────────────────
+RESUME_BUFFER_SECS=120  # Extra buffer (2 min) added after stated wait time
+MONITOR_INTERVAL=30     # How often (secs) to check panes for usage-limit errors
+SWARM_LOG=""            # Set after SESSION is known (uses /tmp/claude-swarm-<session>.log)
+
 # ── Parse args ──────────────────────────────────────────────────────────────
 usage() {
   echo "Usage: $(basename "$0") [-n NUM] [-s SESSION] [-b BRANCH] [-t claude|gemini|codex] [-a]"
@@ -60,11 +65,13 @@ fi
 # ── Resolve repo info ────────────────────────────────────────────────────────
 REPO_ROOT=$(git rev-parse --show-toplevel)
 [[ -z "$BASE_BRANCH" ]] && BASE_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse HEAD)
+SWARM_LOG="/tmp/claude-swarm-${SESSION}.log"
 
 echo "🌳  Repo   : $REPO_ROOT"
 echo "🌿  Branch : $BASE_BRANCH"
 echo "🤖  Instances: $NUM  (CLI: $CLI_TYPE)"
 echo "📺  Session : $SESSION"
+echo "📋  Log     : $SWARM_LOG"
 echo ""
 
 # ── Add mode: append workers to an existing session ──────────────────────────
@@ -114,6 +121,107 @@ if [[ $ADD_MODE -eq 1 ]]; then
   exit 0
 fi
 
+# ── Usage-limit detection ────────────────────────────────────────────────────
+
+# Returns 0 (true) if the pane content contains an API usage-limit error
+has_usage_limit_error() {
+  local content="$1"
+  echo "$content" | grep -qiE \
+    "exceeded your usage limit|usage limits.{0,60}try again after|rate limit.{0,60}retry after"
+}
+
+# Parses wait duration from error text; prints total seconds (without buffer).
+# Tries the exact UTC timestamp first, then the relative duration, then defaults to 1 hour.
+extract_wait_secs() {
+  local content="$1"
+
+  # Primary: "after HH:MM UTC" — sleep until the exact stated wall-clock time
+  local utc_time
+  utc_time=$(echo "$content" | grep -oiE 'after [0-9]+:[0-9]+ UTC' \
+             | grep -oE '[0-9]+:[0-9]+' | head -1)
+  if [[ -n "$utc_time" ]]; then
+    local target_h target_m now_epoch target_epoch
+    target_h=$(echo "$utc_time" | cut -d: -f1)
+    target_m=$(echo "$utc_time" | cut -d: -f2)
+    now_epoch=$(date -u +%s)
+    target_epoch=$(date -u -d "today ${target_h}:${target_m}:00" +%s 2>/dev/null || echo 0)
+    if [[ $target_epoch -gt 0 && $target_epoch -le $now_epoch ]]; then
+      target_epoch=$(( target_epoch + 86400 ))  # already passed → next day
+    fi
+    if [[ $target_epoch -gt 0 ]]; then
+      echo $(( target_epoch - now_epoch ))
+      return
+    fi
+  fi
+
+  # Fallback: "in X hours Y minutes"
+  local hours=0 mins=0
+  local h_match
+  h_match=$(echo "$content" | grep -oiE 'in [0-9]+ hours?' | grep -oE '[0-9]+' | head -1)
+  [[ -n "$h_match" ]] && hours="$h_match"
+
+  if [[ $hours -gt 0 ]]; then
+    local m_match
+    m_match=$(echo "$content" | grep -oiE '[0-9]+ minutes?' | grep -oE '[0-9]+' | head -1)
+    [[ -n "$m_match" ]] && mins="$m_match"
+  fi
+
+  if [[ $hours -gt 0 || $mins -gt 0 ]]; then
+    echo $(( hours * 3600 + mins * 60 ))
+    return
+  fi
+
+  echo 3600  # default fallback: 1 hour
+}
+
+# Background monitor: watches one tmux window for usage-limit errors and
+# automatically resumes with `<CLI_TYPE> --continue` after the wait expires.
+monitor_usage_limit() {
+  local window="$1"       # tmux window index (1-based)
+  local worker_num="$2"   # human label used in window name / log
+  local detected=0
+
+  while tmux has-session -t "$SESSION" 2>/dev/null; do
+    sleep "$MONITOR_INTERVAL"
+
+    if ! tmux has-session -t "$SESSION" 2>/dev/null; then break; fi
+
+    local content
+    content=$(tmux capture-pane -t "${SESSION}:${window}" -p 2>/dev/null) || break
+
+    if [[ $detected -eq 0 ]] && has_usage_limit_error "$content"; then
+      detected=1
+
+      local wait_secs total_secs
+      wait_secs=$(extract_wait_secs "$content")
+      total_secs=$(( wait_secs + RESUME_BUFFER_SECS ))
+
+      local display_h display_m
+      display_h=$(( total_secs / 3600 ))
+      display_m=$(( (total_secs % 3600) / 60 ))
+
+      printf '%s [worker-%s] API usage limit hit. Resuming in %dh %dm.\n' \
+        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$worker_num" "$display_h" "$display_m" \
+        | tee -a "$SWARM_LOG"
+
+      tmux rename-window -t "${SESSION}:${window}" \
+        "w${worker_num}[wait ${display_h}h${display_m}m]" 2>/dev/null || true
+
+      sleep "$total_secs"
+
+      if tmux has-session -t "$SESSION" 2>/dev/null; then
+        printf '%s [worker-%s] Resuming with %s --continue.\n' \
+          "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$worker_num" "$CLI_TYPE" \
+          | tee -a "$SWARM_LOG"
+
+        tmux send-keys -t "${SESSION}:${window}" "$CLI_TYPE --continue" Enter
+        tmux rename-window -t "${SESSION}:${window}" "worker-${worker_num}" 2>/dev/null || true
+        detected=0  # reset so future limit hits are detected
+      fi
+    fi
+  done
+}
+
 # ── Kill existing session (clean restart) ────────────────────────────────────
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "⚠️   Session '$SESSION' already exists — killing it."
@@ -122,9 +230,15 @@ fi
 
 # ── Create worktrees ─────────────────────────────────────────────────────────
 WORKTREE_DIRS=()
+MONITOR_PIDS=()
 
 cleanup() {
   echo ""
+  echo "🔴  Stopping pane monitors…"
+  for pid in "${MONITOR_PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+
   echo "🧹  Cleaning up worktrees…"
   for dir in "${WORKTREE_DIRS[@]}"; do
     if [[ -d "$dir" ]]; then
@@ -197,10 +311,18 @@ tmux bind-key "+" run-shell "$ADD_ONE"
 tmux rename-window -t "${SESSION}:1" "worker-1"
 tmux send-keys -t "${SESSION}:1" "$CLI_TYPE" Enter
 
+# Start usage-limit monitor for window 1
+monitor_usage_limit 1 1 &
+MONITOR_PIDS+=($!)
+
 # Create remaining windows
 for i in $(seq 2 "$NUM"); do
   tmux new-window -t "$SESSION" -c "${WORKTREE_DIRS[$((i-1))]}" -n "worker-${i}"
   tmux send-keys -t "${SESSION}:${i}" "$CLI_TYPE" Enter
+
+  # Start usage-limit monitor for this window
+  monitor_usage_limit "$i" "$i" &
+  MONITOR_PIDS+=($!)
 done
 
 # Go back to window 1
@@ -208,14 +330,22 @@ tmux select-window -t "${SESSION}:1"
 
 # ── Attach ───────────────────────────────────────────────────────────────────
 echo "✅  All $NUM ${CLI_TYPE} instances launched!"
+echo "🔍  Usage-limit monitors active (log: $SWARM_LOG)"
 echo "📎  Attaching to session '$SESSION'…"
 echo "    Detach anytime with: Ctrl+b  d"
 echo ""
 
-# Disable the EXIT trap while attached (user manually cleans up)
+# Disable the EXIT trap while attached (user manually cleans up after detach)
 trap - EXIT
 
 tmux attach-session -t "$SESSION"
+
+# ── Post-detach: stop monitors ───────────────────────────────────────────────
+echo ""
+echo "🔴  Stopping pane monitors…"
+for pid in "${MONITOR_PIDS[@]}"; do
+  kill "$pid" 2>/dev/null || true
+done
 
 # ── Post-detach cleanup prompt ───────────────────────────────────────────────
 echo ""
