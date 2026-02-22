@@ -188,37 +188,40 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 		_ = tmux.SetOption(cfg.Session, k, v)
 	}
 
-	// ── Agent panes (window "swarm") ──────────────────────────────────────────
-	// Get the initial pane — this becomes worker 1.
-	firstPaneID, err := tmux.GetPaneID(fmt.Sprintf("%s:swarm", cfg.Session))
+	// ── Agent panes (window "swarm") — 2×2 grid ─────────────────────────────
+	//
+	//  ┌─────────────┬─────────────┐
+	//  │   worker-1  │   worker-2  │
+	//  ├─────────────┼─────────────┤
+	//  │   worker-3  │   worker-4  │
+	//  └─────────────┴─────────────┘
+	//
+	topLeft, err := tmux.GetPaneID(fmt.Sprintf("%s:swarm", cfg.Session))
 	if err != nil {
 		return fmt.Errorf("getting initial pane ID: %w", err)
 	}
-
-	workerPaneIDs := make([]string, cfg.Num)
-	workerPaneIDs[0] = firstPaneID
-	currentPane := firstPaneID
-
-	// Build N equal vertical panes by splitting the bottom portion each time.
-	for i := 1; i < cfg.Num; i++ {
-		remaining := cfg.Num - i
-		pct := 100 * remaining / (remaining + 1)
-		newPane, err := tmux.SplitWindowGetPaneID(currentPane, worktreeDirs[i], pct, false)
-		if err != nil {
-			return fmt.Errorf("creating pane for worker %d: %w", i+1, err)
-		}
-		workerPaneIDs[i] = newPane
-		currentPane = newPane
+	topRight, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[1%cfg.Num], 50, true)
+	if err != nil {
+		return fmt.Errorf("creating top-right pane: %w", err)
+	}
+	bottomLeft, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[2%cfg.Num], 50, false)
+	if err != nil {
+		return fmt.Errorf("creating bottom-left pane: %w", err)
+	}
+	bottomRight, err := tmux.SplitWindowGetPaneID(topRight, worktreeDirs[3%cfg.Num], 50, false)
+	if err != nil {
+		return fmt.Errorf("creating bottom-right pane: %w", err)
 	}
 
-	// Launch agent in each pane.
+	workerPaneIDs := []string{topLeft, topRight, bottomLeft, bottomRight}
+
 	for i, paneID := range workerPaneIDs {
+		idx := i % cfg.Num
 		_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", i+1))
-		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[i], cfg.CLIType))
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cfg.CLIType))
 	}
 
-	// Focus the first agent pane.
-	_ = tmux.SelectPane(workerPaneIDs[0])
+	_ = tmux.SelectPane(topLeft)
 
 	// ── Hub window (nvim + lazygit) ───────────────────────────────────────────
 	if err := tmux.NewWindowNoIndex(cfg.Session, repoRoot, "hub"); err != nil {
