@@ -1,12 +1,27 @@
 version: '3'
 
 tasks:
-  install:
-    desc: Install claude-swarm to ~/bin and update PATH
+  build:
+    desc: Build the claude-swarm Go binary
     cmds:
+      - go build -o claude-swarm .
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  install:
+    desc: Build and install claude-swarm to ~/bin
+    cmds:
+      - task: build
       - mkdir -p ~/bin
-      - mv claude-swarm ~/bin/claude-swarm
-      - chmod +x ~/bin/claude-swarm
+      - cp claude-swarm ~/bin/claude-swarm
       - |
         if ! grep -q 'export PATH="$HOME/bin:$PATH"' ~/.bashrc; then
           echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
