@@ -45,12 +45,13 @@ func runShip(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	stdin := bufio.NewReader(os.Stdin)
+
 	// Warn if not in a worktree (branch doesn't look like swarm/*)
 	if !strings.HasPrefix(branch, "swarm/") {
 		fmt.Printf("⚠️   Current branch %q doesn't look like a swarm worktree branch.\n", branch)
 		fmt.Print("    Continue anyway? [y/N] ")
-		reader := bufio.NewReader(os.Stdin)
-		answer, _ := reader.ReadString('\n')
+		answer, _ := stdin.ReadString('\n')
 		if !strings.EqualFold(strings.TrimSpace(answer), "y") {
 			return nil
 		}
@@ -91,14 +92,15 @@ func runShip(cmd *cobra.Command, args []string) error {
 
 	// Cleanup
 	fmt.Print("\n🧹  Remove worktree and branch? [Y/n] ")
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
+	answer, _ := stdin.ReadString('\n')
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		answer = "Y"
 	}
 	if strings.EqualFold(answer, "y") {
-		_ = os.Chdir(repoRoot)
+		if err := os.Chdir(repoRoot); err != nil {
+			fmt.Printf("⚠️   Could not cd to repo root: %v\n", err)
+		}
 		_ = git.RemoveWorktree(cwd)
 		_ = git.DeleteBranch(branch)
 		_ = git.Prune()

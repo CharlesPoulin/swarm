@@ -108,16 +108,6 @@ func SelectPane(target string) error {
 	return run("select-pane", "-t", target)
 }
 
-// SplitWindow splits a pane. horizontal=true means side-by-side (-h).
-func SplitWindow(target, cwd string, percent int, horizontal bool) error {
-	args := []string{"split-window", "-t", target}
-	if horizontal {
-		args = append(args, "-h")
-	}
-	args = append(args, "-p", fmt.Sprintf("%d", percent), "-c", cwd)
-	return run(args...)
-}
-
 // SplitWindowGetPaneID splits a pane and returns the new pane's stable %N ID.
 func SplitWindowGetPaneID(target, cwd string, percent int, horizontal bool) (string, error) {
 	args := []string{"split-window", "-t", target, "-P", "-F", "#{pane_id}"}

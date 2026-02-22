@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,6 +69,20 @@ func initConfig() {
 	_ = viper.ReadInConfig()
 }
 
+// ── Naming helpers ─────────────────────────────────────────────────────────────
+
+func wtDir(repoRoot, prefix string, i int) string {
+	return filepath.Join(repoRoot, fmt.Sprintf("%s-%d", prefix, i))
+}
+
+func wtBranch(baseBranch string, i int) string {
+	return fmt.Sprintf("swarm/%s/worker-%d", baseBranch, i)
+}
+
+func paneTitle(i int, cliType string) string {
+	return fmt.Sprintf("worker-%d (%s)", i, cliType)
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 func validate(cfg *config.Config) error {
@@ -130,46 +145,72 @@ func orchestrate(cfg *config.Config) error {
 	fmt.Printf("📺  Session : %s\n", cfg.Session)
 	fmt.Printf("📋  Log     : %s\n\n", logPath)
 
+	var w io.Writer = os.Stdout
+	if logFile != nil {
+		w = io.MultiWriter(os.Stdout, logFile)
+	}
+
 	if cfg.AddMode {
 		return addWorkers(cfg, repoRoot, workers)
 	}
-	return startSwarm(cfg, repoRoot, workers, logFile)
+	return startSwarm(cfg, repoRoot, workers, w)
 }
 
 // ── Start swarm ───────────────────────────────────────────────────────────────
 
-func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *os.File) error {
+func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writer) error {
 	if tmux.HasSession(cfg.Session) {
 		fmt.Printf("⚠️   Session %q already exists — killing it.\n", cfg.Session)
 		_ = tmux.KillSession(cfg.Session)
 	}
 
-	// Create worktrees.
-	worktreeDirs := make([]string, len(workers))
-	for i := 1; i <= len(workers); i++ {
-		wtDir := filepath.Join(repoRoot, fmt.Sprintf("%s-%d", cfg.WorktreePrefix, i))
-		wtBranch := fmt.Sprintf("swarm/%s/worker-%d", cfg.BaseBranch, i)
-		_ = git.RemoveWorktree(wtDir)
-		_ = git.DeleteBranch(wtBranch)
-		if err := git.AddWorktree(wtDir, wtBranch, cfg.BaseBranch); err != nil {
-			return err
-		}
-		worktreeDirs[i-1] = wtDir
-		fmt.Printf("✅  Worktree %d → %s  (branch: %s, CLI: %s)\n", i, wtDir, wtBranch, workers[i-1])
+	worktreeDirs, err := createWorktrees(cfg, repoRoot, workers)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println("\n🚀  Launching tmux session…")
 
-	hasLazygit := commandExists("lazygit")
-	hasNvim := commandExists("nvim")
-
-	// ── Session ───────────────────────────────────────────────────────────────
-	// First window is "swarm" — all agent panes live here.
 	if err := tmux.NewSession(cfg.Session, worktreeDirs[0], 220, 50, "swarm"); err != nil {
 		return err
 	}
 
-	// ── Status bar ────────────────────────────────────────────────────────────
+	applyStatusBar(cfg, workers)
+
+	paneIDs, err := setupSwarmWindow(cfg, workers, worktreeDirs)
+	if err != nil {
+		return err
+	}
+
+	nvimID, lgID, err := setupHubWindow(cfg, repoRoot)
+	if err != nil {
+		return err
+	}
+
+	bindKeybindings(cfg, nvimID, lgID)
+
+	return runAndMonitor(cfg, repoRoot, workers, worktreeDirs, paneIDs, w)
+}
+
+// createWorktrees creates git worktrees for all workers and returns their dirs.
+func createWorktrees(cfg *config.Config, repoRoot string, workers []string) ([]string, error) {
+	worktreeDirs := make([]string, len(workers))
+	for i := 1; i <= len(workers); i++ {
+		dir := wtDir(repoRoot, cfg.WorktreePrefix, i)
+		branch := wtBranch(cfg.BaseBranch, i)
+		_ = git.RemoveWorktree(dir)
+		_ = git.DeleteBranch(branch)
+		if err := git.AddWorktree(dir, branch, cfg.BaseBranch); err != nil {
+			return nil, err
+		}
+		worktreeDirs[i-1] = dir
+		fmt.Printf("✅  Worktree %d → %s  (branch: %s, CLI: %s)\n", i, dir, branch, workers[i-1])
+	}
+	return worktreeDirs, nil
+}
+
+// applyStatusBar sets session-scoped tmux status bar options in a deterministic order.
+func applyStatusBar(cfg *config.Config, workers []string) {
 	cliLabel := cfg.CLIType
 	if len(uniqueWorkerTypes(workers)) > 1 {
 		cliLabel = strings.Join(uniqueWorkerTypes(workers), ",")
@@ -186,25 +227,29 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit",
 		len(workers))
 
-	for k, v := range map[string]string{
-		"status":                       "on",
-		"status-position":              "bottom",
-		"status-style":                 "bg=colour235,fg=colour245",
-		"status-left":                  statusLeft,
-		"status-left-length":           "30",
-		"status-right":                 statusRight,
-		"status-right-length":          "140",
-		"window-status-format":         "#[fg=colour245] #I:#W ",
-		"window-status-current-format": "#[bg=colour33,fg=colour15,bold] #I:#W ",
-		"pane-border-style":            "fg=colour238",
-		"pane-active-border-style":     "fg=colour39",
-		"pane-border-status":           "top",
-		"pane-border-format":           " #{pane_title} ",
-	} {
-		_ = tmux.SetOption(cfg.Session, k, v)
+	statusOpts := [][2]string{
+		{"status", "on"},
+		{"status-position", "bottom"},
+		{"status-style", "bg=colour235,fg=colour245"},
+		{"status-left", statusLeft},
+		{"status-left-length", "30"},
+		{"status-right", statusRight},
+		{"status-right-length", "140"},
+		{"window-status-format", "#[fg=colour245] #I:#W "},
+		{"window-status-current-format", "#[bg=colour33,fg=colour15,bold] #I:#W "},
+		{"pane-border-style", "fg=colour238"},
+		{"pane-active-border-style", "fg=colour39"},
+		{"pane-border-status", "top"},
+		{"pane-border-format", " #{pane_title} "},
 	}
+	for _, opt := range statusOpts {
+		_ = tmux.SetOption(cfg.Session, opt[0], opt[1])
+	}
+}
 
-	// ── Agent panes (window "swarm") — 2×2 grid ─────────────────────────────
+// setupSwarmWindow creates the 2×2 pane grid in the "swarm" window and
+// launches each AI CLI. Returns pane IDs (topLeft, topRight, bottomLeft, bottomRight).
+func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]string, error) {
 	//
 	//  ┌─────────────┬─────────────┐
 	//  │   worker-1  │   worker-2  │
@@ -214,57 +259,63 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 	//
 	topLeft, err := tmux.GetPaneID(fmt.Sprintf("%s:swarm", cfg.Session))
 	if err != nil {
-		return fmt.Errorf("getting initial pane ID: %w", err)
+		return nil, fmt.Errorf("getting initial pane ID: %w", err)
 	}
 	topRight, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[1%len(workers)], 50, true)
 	if err != nil {
-		return fmt.Errorf("creating top-right pane: %w", err)
+		return nil, fmt.Errorf("creating top-right pane: %w", err)
 	}
 	bottomLeft, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[2%len(workers)], 50, false)
 	if err != nil {
-		return fmt.Errorf("creating bottom-left pane: %w", err)
+		return nil, fmt.Errorf("creating bottom-left pane: %w", err)
 	}
 	bottomRight, err := tmux.SplitWindowGetPaneID(topRight, worktreeDirs[3%len(workers)], 50, false)
 	if err != nil {
-		return fmt.Errorf("creating bottom-right pane: %w", err)
+		return nil, fmt.Errorf("creating bottom-right pane: %w", err)
 	}
 
 	workerPaneIDs := []string{topLeft, topRight, bottomLeft, bottomRight}
-
 	for i, paneID := range workerPaneIDs {
 		idx := i % len(workers)
-		_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d (%s)", i+1, workers[idx]))
+		_ = tmux.SetPaneTitle(paneID, paneTitle(i+1, workers[idx]))
 		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx])))
 	}
-
 	_ = tmux.SelectPane(topLeft)
 
-	// ── Hub window (nvim + lazygit) ───────────────────────────────────────────
-	if err := tmux.NewWindowNoIndex(cfg.Session, repoRoot, "hub"); err != nil {
-		return err
-	}
+	return workerPaneIDs, nil
+}
 
-	hubPaneID, err := tmux.GetPaneID(fmt.Sprintf("%s:hub", cfg.Session))
+// setupHubWindow creates the "hub" window with nvim and optionally lazygit.
+// Returns (nvimPaneID, lazygitPaneID, error); lazygitPaneID is empty if lazygit is absent.
+func setupHubWindow(cfg *config.Config, repoRoot string) (nvimPaneID, lazygitPaneID string, err error) {
+	if err = tmux.NewWindowNoIndex(cfg.Session, repoRoot, "hub"); err != nil {
+		return
+	}
+	nvimPaneID, err = tmux.GetPaneID(fmt.Sprintf("%s:hub", cfg.Session))
 	if err != nil {
-		return fmt.Errorf("getting hub pane ID: %w", err)
+		err = fmt.Errorf("getting hub pane ID: %w", err)
+		return
 	}
 
-	var lazygitPaneID string
-	if hasNvim {
-		_ = tmux.SendKeys(hubPaneID, "nvim .")
+	if commandExists("nvim") {
+		_ = tmux.SendKeys(nvimPaneID, "nvim .")
 	}
-	if hasLazygit {
-		lazygitPaneID, err = tmux.SplitWindowGetPaneID(hubPaneID, repoRoot, 40, true)
+	if commandExists("lazygit") {
+		lazygitPaneID, err = tmux.SplitWindowGetPaneID(nvimPaneID, repoRoot, 40, true)
 		if err != nil {
-			return fmt.Errorf("splitting hub for lazygit: %w", err)
+			err = fmt.Errorf("splitting hub for lazygit: %w", err)
+			return
 		}
 		_ = tmux.SendKeys(lazygitPaneID, "lazygit")
-		_ = tmux.SelectPane(hubPaneID) // focus nvim by default
+		_ = tmux.SelectPane(nvimPaneID) // focus nvim by default
 	} else {
 		fmt.Println("⚠️   lazygit not found — hub opens without git pane.")
 	}
+	return
+}
 
-	// ── Keybindings ───────────────────────────────────────────────────────────
+// bindKeybindings sets session-scoped tmux keybindings.
+func bindKeybindings(cfg *config.Config, hubPaneID, lazygitPaneID string) {
 	// Alt+1 → swarm (agents), Alt+2 → hub
 	_ = tmux.BindKey(cfg.Session, "-n", "M-1",
 		fmt.Sprintf("select-window -t '%s:swarm'", cfg.Session))
@@ -275,7 +326,7 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 	_ = tmux.BindKey(cfg.Session, "", "S",
 		"confirm-before -p \"Ship this worktree as a PR? (y/n)\" "+
 			"\"new-window -c '#{pane_current_path}' 'claude-swarm ship; echo; read -p \\\"Press Enter to close…\\\"'\"")
-  
+
 	// Ctrl+Q → kill session (no prefix)
 	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
 		fmt.Sprintf("kill-session -t '%s'", cfg.Session))
@@ -284,13 +335,15 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 	_ = tmux.BindKey(cfg.Session, "", "e",
 		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
 			cfg.Session, hubPaneID))
-	if hasLazygit && lazygitPaneID != "" {
+	if lazygitPaneID != "" {
 		_ = tmux.BindKey(cfg.Session, "", "g",
 			fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
 				cfg.Session, lazygitPaneID))
 	}
+}
 
-	// ── Attach (starts on swarm window) ──────────────────────────────────────
+// runAndMonitor attaches the tmux session, starts worker monitors, and handles post-detach cleanup.
+func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, paneIDs []string, w io.Writer) error {
 	_ = tmux.SelectWindow(fmt.Sprintf("%s:swarm", cfg.Session))
 
 	fmt.Printf("✅  All %d instances launched!\n", len(workers))
@@ -299,12 +352,11 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 	fmt.Println("    Detach: Ctrl+b d  |  Hub: Alt+2  |  Agents: Alt+1")
 	fmt.Println()
 
-	// ── Start monitors ────────────────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	for i, paneID := range workerPaneIDs {
+	for i, paneID := range paneIDs {
 		idx := i % len(workers)
-		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx]), logFile)
+		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx]), w)
 	}
 
 	attachCmd := exec.Command("tmux", "attach-session", "-t", cfg.Session)
@@ -330,7 +382,7 @@ func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 	// Simpler: just check how many worktree dirs exist already.
 	i := 1
 	for {
-		if _, err := os.Stat(filepath.Join(repoRoot, fmt.Sprintf("%s-%d", cfg.WorktreePrefix, i))); os.IsNotExist(err) {
+		if _, err := os.Stat(wtDir(repoRoot, cfg.WorktreePrefix, i)); os.IsNotExist(err) {
 			break
 		}
 		i++
@@ -339,22 +391,22 @@ func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 
 	for j, cliType := range workers {
 		i := startIdx + j
-		wtDir := filepath.Join(repoRoot, fmt.Sprintf("%s-%d", cfg.WorktreePrefix, i))
-		wtBranch := fmt.Sprintf("swarm/%s/worker-%d", cfg.BaseBranch, i)
-		_ = git.RemoveWorktree(wtDir)
-		_ = git.DeleteBranch(wtBranch)
-		if err := git.AddWorktree(wtDir, wtBranch, cfg.BaseBranch); err != nil {
+		dir := wtDir(repoRoot, cfg.WorktreePrefix, i)
+		branch := wtBranch(cfg.BaseBranch, i)
+		_ = git.RemoveWorktree(dir)
+		_ = git.DeleteBranch(branch)
+		if err := git.AddWorktree(dir, branch, cfg.BaseBranch); err != nil {
 			return err
 		}
-		fmt.Printf("✅  Worktree %d → %s  (branch: %s, CLI: %s)\n", i, wtDir, wtBranch, cliType)
+		fmt.Printf("✅  Worktree %d → %s  (branch: %s, CLI: %s)\n", i, dir, branch, cliType)
 
 		// Find the last pane in swarm window and split it.
-		newPane, err := tmux.SplitWindowGetPaneID(fmt.Sprintf("%s:swarm", cfg.Session), wtDir, 50, false)
+		newPane, err := tmux.SplitWindowGetPaneID(fmt.Sprintf("%s:swarm", cfg.Session), dir, 50, false)
 		if err != nil {
 			return fmt.Errorf("creating pane for worker %d: %w", i, err)
 		}
-		_ = tmux.SetPaneTitle(newPane, fmt.Sprintf("worker-%d (%s)", i, cliType))
-		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", wtDir, cliCmdFor(cfg, cliType)))
+		_ = tmux.SetPaneTitle(newPane, paneTitle(i, cliType))
+		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType)))
 	}
 
 	fmt.Printf("✅  Added %d worker(s) to session %q.\n", len(workers), cfg.Session)
