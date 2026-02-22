@@ -14,6 +14,8 @@ func TestHasError(t *testing.T) {
 		{"You have exceeded your usage limit for today.", true},
 		{"API usage limits — try again after 14:00 UTC", true},
 		{"Rate limit exceeded, retry after 1 hour", true},
+		{"You exceeded your current quota, please check your plan and billing details", true},
+		{"insufficient_quota: you have run out of credits", true},
 		{"Everything is fine, carry on.", false},
 		{"", false},
 	}
@@ -48,6 +50,8 @@ func TestExtractWaitSecs_RelativeDuration(t *testing.T) {
 		{"in 2 hours", 7200, 7200},
 		{"in 0 hours 45 minutes", 3600, 3600}, // 0 hours → fallback (no hours match)
 		{"no duration here", 3600, 3600},       // default fallback
+		{"rate limit exceeded, retry in 30 seconds", 30, 30},
+		{"retry in 1m30s", 90, 90},
 	}
 	for _, tc := range cases {
 		t.Run(tc.text, func(t *testing.T) {

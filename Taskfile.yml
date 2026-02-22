@@ -16,6 +16,20 @@ tasks:
     cmds:
       - go vet ./...
 
+  try:
+    desc: Build and open a new terminal with the fresh binary ready to run
+    cmds:
+      - task: build
+      - |
+        dir="$(pwd)"
+        if [ -n "$TMUX" ]; then
+          tmux new-window -c "$dir" -n "try" "env PATH=\"$dir:\$PATH\" bash -i"
+        elif command -v wt.exe >/dev/null 2>&1; then
+          wt.exe --window 0 new-tab --title "try" -- bash -c "cd '$dir' && PATH='$dir:\$PATH' exec bash -i"
+        else
+          echo "→ Open a new terminal and run: PATH='$dir:\$PATH' ./claude-swarm"
+        fi
+
   install:
     desc: Build and install claude-swarm to ~/bin
     cmds:

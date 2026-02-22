@@ -434,6 +434,12 @@ func buildWorkers(cfg *config.Config) []string {
 }
 
 func normalizeWorkers(workers []string) []string {
+	workers = normalizeGemini(workers)
+	workers = normalizeCodex(workers)
+	return workers
+}
+
+func normalizeGemini(workers []string) []string {
 	if !containsCLIType(workers, "gemini") {
 		return workers
 	}
@@ -449,7 +455,8 @@ func normalizeWorkers(workers []string) []string {
 	replaced := make([]string, len(workers))
 	replacedCount := 0
 	for i, cliType := range workers {
-		if cliType == "gemini" {
+		cliName, _ := parseWorker(cliType)
+		if cliName == "gemini" {
 			replaced[i] = fallback
 			replacedCount++
 		} else {
@@ -458,6 +465,34 @@ func normalizeWorkers(workers []string) []string {
 	}
 	fmt.Printf("⚠️   Gemini failed health check; replaced %d worker(s) with %s.\n", replacedCount, fallback)
 	fmt.Println("⚠️   Fix locally by upgrading Node.js and reinstalling @google/gemini-cli.")
+	return replaced
+}
+
+func normalizeCodex(workers []string) []string {
+	if !containsCLIType(workers, "codex") {
+		return workers
+	}
+	if codexHealthCheck() {
+		return workers
+	}
+	fallback, ok := firstAvailableCLI("claude", "gemini")
+	if !ok {
+		fmt.Println("⚠️   Codex is installed but fails to start.")
+		fmt.Println("⚠️   No fallback CLI (claude/gemini) was found, keeping codex workers as-is.")
+		return workers
+	}
+	replaced := make([]string, len(workers))
+	replacedCount := 0
+	for i, cliType := range workers {
+		cliName, _ := parseWorker(cliType)
+		if cliName == "codex" {
+			replaced[i] = fallback
+			replacedCount++
+		} else {
+			replaced[i] = cliType
+		}
+	}
+	fmt.Printf("⚠️   Codex failed health check; replaced %d worker(s) with %s.\n", replacedCount, fallback)
 	return replaced
 }
 
@@ -478,6 +513,14 @@ func firstAvailableCLI(cliTypes ...string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func codexHealthCheck() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "codex", "--version")
+	_, err := cmd.CombinedOutput()
+	return err == nil && ctx.Err() == nil
 }
 
 func geminiHealthCheck() bool {
