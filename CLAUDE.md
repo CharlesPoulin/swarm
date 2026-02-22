@@ -47,7 +47,7 @@ The entry point is `main.go` → `cmd.Execute()` (cobra). All logic lives in `cm
 **Config file** (`~/.claude-swarm.yaml`):
 ```yaml
 num: 4
-cli_type: claude,claude,claude,gemini
+cli_type: claude,claude,gemini:gemini-3-flash,gemini:gemini-3.1-pro
 cli_flags: ""
 session: claude-swarm
 resume_buffer_secs: 120
