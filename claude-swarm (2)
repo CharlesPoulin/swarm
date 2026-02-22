@@ -267,17 +267,23 @@ done
 echo ""
 echo "🚀  Launching tmux session…"
 
+# ── Detect optional tools ─────────────────────────────────────────────────────
+HAS_LAZYGIT=0
+HAS_NVIM=0
+command -v lazygit &>/dev/null && HAS_LAZYGIT=1
+command -v nvim    &>/dev/null && HAS_NVIM=1
+
 # ── Build tmux session ───────────────────────────────────────────────────────
 STATUS_BAR="#[bg=colour235,fg=colour245] Swarm: ${NUM} workers  \
-#[fg=colour39]Alt+1-9#[fg=colour245]:switch  \
-#[fg=colour39]Ctrl+b +#[fg=colour245]:add worker  \
-#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  \
-#[fg=colour39]Ctrl+b x#[fg=colour245]:kill tab  \
-#[fg=colour39]Ctrl+b [#[fg=colour245]:scroll  \
-#[fg=colour39]q#[fg=colour245]:exit scroll"
+#[fg=colour39]Alt+0#[fg=colour245]:hub  \
+#[fg=colour39]Alt+1-9#[fg=colour245]:worker  \
+#[fg=colour39]Ctrl+b+#[fg=colour245]:add  \
+#[fg=colour39]Ctrl+b g#[fg=colour245]:git  \
+#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  \
+#[fg=colour39]Ctrl+b d#[fg=colour245]:detach"
 
-# Start session with first window
-tmux new-session -d -s "$SESSION" -c "${WORKTREE_DIRS[0]}" -x 220 -y 50
+# Start session — window 0 is the hub, workers begin at 1
+tmux new-session -d -s "$SESSION" -c "$REPO_ROOT" -x 220 -y 50
 
 # Configure status bar
 tmux set-option -t "$SESSION" status on
@@ -286,17 +292,51 @@ tmux set-option -t "$SESSION" status-style "bg=colour235,fg=colour245"
 tmux set-option -t "$SESSION" status-left "#[bg=colour33,fg=colour15,bold] 🤖 SWARM (${CLI_TYPE}) #[bg=colour235] "
 tmux set-option -t "$SESSION" status-left-length 30
 tmux set-option -t "$SESSION" status-right "$STATUS_BAR"
-tmux set-option -t "$SESSION" status-right-length 120
+tmux set-option -t "$SESSION" status-right-length 140
 tmux set-option -t "$SESSION" window-status-format "#[fg=colour245] #I:#W "
 tmux set-option -t "$SESSION" window-status-current-format "#[bg=colour33,fg=colour15,bold] #I:#W "
 
-# Bind Alt+number for quick window switching
+# ── Window 0: Hub (nvim left | lazygit right) ────────────────────────────────
+tmux rename-window -t "${SESSION}:0" "hub"
+
+# Left pane: nvim (or a plain shell if nvim not available)
+if [[ $HAS_NVIM -eq 1 ]]; then
+  tmux send-keys -t "${SESSION}:0" "nvim ." Enter
+else
+  tmux send-keys -t "${SESSION}:0" "echo 'nvim not found — install it for editor support'" Enter
+fi
+
+# Right pane: lazygit (40% width)
+if [[ $HAS_LAZYGIT -eq 1 ]]; then
+  tmux split-window -t "${SESSION}:0" -h -p 40 -c "$REPO_ROOT"
+  tmux send-keys -t "${SESSION}:0.1" "lazygit" Enter
+  # Pane border styling: highlight lazygit pane
+  tmux set-option -t "$SESSION" pane-border-style "fg=colour238"
+  tmux set-option -t "$SESSION" pane-active-border-style "fg=colour39"
+  # Give nvim focus by default
+  tmux select-pane -t "${SESSION}:0.0"
+else
+  echo "⚠️   lazygit not found — hub will open without git pane. Install lazygit for best experience."
+fi
+
+# ── Keybindings for hub navigation ───────────────────────────────────────────
+# Ctrl+b g  → jump to lazygit pane in hub
+if [[ $HAS_LAZYGIT -eq 1 ]]; then
+  tmux bind-key "g" run-shell "tmux select-window -t '${SESSION}:hub' && tmux select-pane -t '${SESSION}:0.1'"
+fi
+# Ctrl+b e  → jump to nvim pane in hub
+tmux bind-key "e" run-shell "tmux select-window -t '${SESSION}:hub' && tmux select-pane -t '${SESSION}:0.0'"
+
+# Alt+0 → hub window
+tmux bind-key -n "M-0" select-window -t "${SESSION}:0" 2>/dev/null || true
+
+# Alt+1-9 → worker windows
 for n in $(seq 1 9); do
   tmux bind-key -t "$SESSION" -n "M-${n}" select-window -t "${n}"  2>/dev/null || \
   tmux bind-key -n "M-${n}" select-window -t "${n}"
 done
 
-# Bind Alt++ to add a new worker on the fly (values baked in at session-creation time)
+# Ctrl+b + → add a new worker on the fly
 ADD_ONE="idx=\$(tmux list-windows -t '${SESSION}' -F '#{window_index}' | sort -n | tail -1); \
 idx=\$((idx+1)); \
 wt='${REPO_ROOT}/${WORKTREE_PREFIX}-'\$idx; \
@@ -307,15 +347,14 @@ tmux send-keys -t '${SESSION}':\$idx '${CLI_TYPE}' Enter && \
 tmux display-message \"✅ Worker \$idx added\""
 tmux bind-key "+" run-shell "$ADD_ONE"
 
-# Rename first window and launch AI CLI
-tmux rename-window -t "${SESSION}:1" "worker-1"
+# ── Worker windows (1-N) ─────────────────────────────────────────────────────
+tmux new-window -t "$SESSION" -c "${WORKTREE_DIRS[0]}" -n "worker-1"
 tmux send-keys -t "${SESSION}:1" "$CLI_TYPE" Enter
 
 # Start usage-limit monitor for window 1
 monitor_usage_limit 1 1 &
 MONITOR_PIDS+=($!)
 
-# Create remaining windows
 for i in $(seq 2 "$NUM"); do
   tmux new-window -t "$SESSION" -c "${WORKTREE_DIRS[$((i-1))]}" -n "worker-${i}"
   tmux send-keys -t "${SESSION}:${i}" "$CLI_TYPE" Enter
@@ -325,7 +364,7 @@ for i in $(seq 2 "$NUM"); do
   MONITOR_PIDS+=($!)
 done
 
-# Go back to window 1
+# Start on worker-1
 tmux select-window -t "${SESSION}:1"
 
 # ── Attach ───────────────────────────────────────────────────────────────────
