@@ -180,7 +180,8 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
-			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach",
+			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
+			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit",
 		len(workers))
 
 	for k, v := range map[string]string{
@@ -190,7 +191,7 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 		"status-left":                  statusLeft,
 		"status-left-length":           "30",
 		"status-right":                 statusRight,
-		"status-right-length":          "120",
+		"status-right-length":          "140",
 		"window-status-format":         "#[fg=colour245] #I:#W ",
 		"window-status-current-format": "#[bg=colour33,fg=colour15,bold] #I:#W ",
 		"pane-border-style":            "fg=colour238",
@@ -267,6 +268,10 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, logFile *
 		fmt.Sprintf("select-window -t '%s:swarm'", cfg.Session))
 	_ = tmux.BindKey(cfg.Session, "-n", "M-2",
 		fmt.Sprintf("select-window -t '%s:hub'", cfg.Session))
+
+	// Ctrl+Q → kill session (no prefix)
+	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
+		fmt.Sprintf("kill-session -t '%s'", cfg.Session))
 
 	// Ctrl+b e → nvim, Ctrl+b g → lazygit
 	_ = tmux.BindKey(cfg.Session, "", "e",
