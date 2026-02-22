@@ -21,7 +21,7 @@ func SetDefaults() {
 	viper.SetDefault("num", 4)
 	viper.SetDefault("session", "claude-swarm")
 	viper.SetDefault("base_branch", "")
-	viper.SetDefault("cli_type", "claude,claude,claude,gemini")
+	viper.SetDefault("cli_type", "claude,claude,gemini:gemini-3-flash,gemini:gemini-3.1-pro")
 	viper.SetDefault("cli_flags", "")
 	viper.SetDefault("add_mode", false)
 	viper.SetDefault("resume_buffer_secs", 120)

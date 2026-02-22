@@ -83,10 +83,12 @@ func validate(cfg *config.Config) error {
 	}
 	for _, cliType := range cliTypes {
 		if !isSupportedCLIType(cliType) {
-			return fmt.Errorf("unknown CLI type %q — use claude, gemini, or codex", cliType)
+			cliName, _ := parseWorker(cliType)
+			return fmt.Errorf("unknown CLI type %q — use claude, gemini, or codex", cliName)
 		}
-		if _, err := exec.LookPath(cliType); err != nil {
-			return fmt.Errorf("%s not found — install it first", cliType)
+		cliName, _ := parseWorker(cliType)
+		if _, err := exec.LookPath(cliName); err != nil {
+			return fmt.Errorf("%s not found — install it first", cliName)
 		}
 	}
 	if cfg.Num < 1 {
@@ -386,8 +388,18 @@ func commandExists(name string) bool {
 	return err == nil
 }
 
+// parseWorker splits "gemini:gemini-2.0-flash" into ("gemini", "gemini-2.0-flash").
+// A plain "claude" returns ("claude", "").
+func parseWorker(s string) (cliName, model string) {
+	if idx := strings.Index(s, ":"); idx != -1 {
+		return s[:idx], s[idx+1:]
+	}
+	return s, ""
+}
+
 func isSupportedCLIType(cliType string) bool {
-	switch cliType {
+	cliName, _ := parseWorker(cliType)
+	switch cliName {
 	case "claude", "gemini", "codex":
 		return true
 	default:
@@ -446,7 +458,8 @@ func normalizeWorkers(workers []string) []string {
 
 func containsCLIType(workers []string, cliType string) bool {
 	for _, worker := range workers {
-		if worker == cliType {
+		cliName, _ := parseWorker(worker)
+		if cliName == cliType {
 			return true
 		}
 	}
@@ -492,10 +505,16 @@ func uniqueWorkerTypes(workers []string) []string {
 	return ordered
 }
 
-// cliCmdFor returns the full CLI invocation for a specific CLI type, including any extra flags.
-func cliCmdFor(cfg *config.Config, cliType string) string {
-	if cfg.CLIFlags == "" {
-		return cliType
+// cliCmdFor returns the full CLI invocation for a worker, including model and extra flags.
+// Worker may be "gemini:gemini-2.0-flash" or plain "claude".
+func cliCmdFor(cfg *config.Config, worker string) string {
+	cliName, model := parseWorker(worker)
+	cmd := cliName
+	if model != "" {
+		cmd += " --model " + model
 	}
-	return cliType + " " + cfg.CLIFlags
+	if cfg.CLIFlags != "" {
+		cmd += " " + cfg.CLIFlags
+	}
+	return cmd
 }
