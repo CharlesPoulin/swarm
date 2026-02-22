@@ -252,35 +252,47 @@ func startSwarm(cfg *config.Config, repoRoot string, logFile *os.File) error {
 		_ = tmux.SetOption(cfg.Session, k, v)
 	}
 
-	// ── Hub window — named "hub" at session creation; target by name, never by index ──
+	// ── Hub window — use stable %N pane IDs to survive any pane-base-index setting ──
 	hub := fmt.Sprintf("%s:hub", cfg.Session)
 
-	if hasNvim {
-		_ = tmux.SendKeys(hub, "nvim .")
-	} else {
-		_ = tmux.SendKeys(hub, "echo 'nvim not found — install it for editor support'")
+	// Capture the initial pane's ID before anything else touches it.
+	leftPaneID, err := tmux.GetPaneID(hub)
+	if err != nil {
+		return fmt.Errorf("getting hub pane ID: %w", err)
 	}
 
+	if hasNvim {
+		_ = tmux.SendKeys(leftPaneID, "nvim .")
+	} else {
+		_ = tmux.SendKeys(leftPaneID, "echo 'nvim not found — install it for editor support'")
+	}
+
+	var rightPaneID string
 	if hasLazygit {
-		_ = tmux.SplitWindow(hub, repoRoot, 40, true)
-		_ = tmux.SendKeys(hub+".1", "lazygit")
+		// Split right (40%) and capture the new pane's ID.
+		rightPaneID, err = tmux.SplitWindowGetPaneID(leftPaneID, repoRoot, 40, true)
+		if err != nil {
+			return fmt.Errorf("splitting hub for lazygit: %w", err)
+		}
+		_ = tmux.SendKeys(rightPaneID, "lazygit")
 		_ = tmux.SetOption(cfg.Session, "pane-border-style", "fg=colour238")
 		_ = tmux.SetOption(cfg.Session, "pane-active-border-style", "fg=colour39")
-		_ = tmux.SelectPane(hub + ".0")
+		// Give focus back to nvim (left pane).
+		_ = tmux.SelectPane(leftPaneID)
 	} else {
 		fmt.Println("⚠️   lazygit not found — hub will open without git pane.")
 	}
 
 	// ── Keybindings ───────────────────────────────────────────────────────────
-	if hasLazygit {
+	if hasLazygit && rightPaneID != "" {
 		_ = tmux.BindKey(cfg.Session, "",
 			"g",
-			fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s:hub.1'\"", cfg.Session, cfg.Session),
+			fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"", cfg.Session, rightPaneID),
 		)
 	}
 	_ = tmux.BindKey(cfg.Session, "",
 		"e",
-		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s:hub.0'\"", cfg.Session, cfg.Session),
+		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"", cfg.Session, leftPaneID),
 	)
 
 	// Alt+0 → hub (by name, not index)

@@ -118,6 +118,29 @@ func SplitWindow(target, cwd string, percent int, horizontal bool) error {
 	return run(args...)
 }
 
+// SplitWindowGetPaneID splits a pane and returns the new pane's stable %N ID.
+func SplitWindowGetPaneID(target, cwd string, percent int, horizontal bool) (string, error) {
+	args := []string{"split-window", "-t", target, "-P", "-F", "#{pane_id}"}
+	if horizontal {
+		args = append(args, "-h")
+	}
+	args = append(args, "-p", fmt.Sprintf("%d", percent), "-c", cwd)
+	out, err := exec.Command("tmux", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux split-window: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// GetPaneID returns the stable %N pane ID for a target.
+func GetPaneID(target string) (string, error) {
+	out, err := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_id}").Output()
+	if err != nil {
+		return "", fmt.Errorf("tmux display-message pane_id -t %s: %w", target, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // ListWindowIndices returns all window indices in the session, sorted ascending.
 func ListWindowIndices(session string) ([]int, error) {
 	out, err := exec.Command("tmux", "list-windows", "-t", session, "-F", "#{window_index}").Output()
