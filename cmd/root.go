@@ -79,6 +79,7 @@ func init() {
 	_ = viper.BindPFlag("assignment_mode", f.Lookup("assign-mode"))
 
 	rootCmd.AddCommand(swapCmd)
+	rootCmd.AddCommand(dispatchCmd)
 }
 
 var swapCmd = &cobra.Command{
@@ -591,6 +592,10 @@ func bindKeybindings(cfg *config.Config, hubPaneID, rightPaneID, pmWindowName st
 	_ = tmux.BindKey(cfg.Session, "", "R",
 		"confirm-before -p \"Reset this worktree to origin/main and clear context? (y/n)\" "+
 			"\"new-window -c '#{pane_current_path}' 'claude-swarm reset -y --pane \\\"#{pane_id}\\\"; echo; read -p \\\"Press Enter to close…\\\"'\"")
+
+	// Ctrl+b D → open task-dispatch TUI in a popup
+	_ = tmux.BindKey(cfg.Session, "", "D",
+		fmt.Sprintf("display-popup -E -w 80 -h 24 \"claude-swarm dispatch -s '%s'\"", cfg.Session))
 
 	// Ctrl+Q → kill session (no prefix)
 	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
