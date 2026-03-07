@@ -49,7 +49,7 @@ Put defaults in `~/.claude-swarm.yaml` so you don't have to retype flags:
 
 ```yaml
 num: 3
-cli_type: codex,codex,claude,gemini:gemini-3-flash-preview,gemini:gemini-3-flash-preview,spare
+cli_type: codex,codex,claude,gemini:gemini-3-flash-preview,gemini:gemini-3-flash-preview,spare,pm
 cli_flags: ""
 session: myswarm
 resume_buffer_secs: 120   # extra wait after usage-limit expires
