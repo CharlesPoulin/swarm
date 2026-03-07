@@ -83,3 +83,14 @@ Rebuild after changes:
 task build   # or: go build -o claude-swarm .
 task install # rebuild + copy to ~/bin
 ```
+
+## CI/CD
+
+This repository uses GitHub Actions for:
+- **CI**: Linting (golangci-lint), testing, and cross-platform build verification on every PR and push to `main`.
+- **Release**: Automated releases using [GoReleaser](https://goreleaser.com/). To create a new release, push a version tag:
+  ```bash
+  git tag -a v1.0.0 -m "Release v1.0.0"
+  git push origin v1.0.0
+  ```
+  This will trigger a workflow to build binaries for Linux, macOS, and Windows and upload them to a new GitHub Release.
