@@ -22,7 +22,8 @@ import (
 type dispatchPhase int
 
 const (
-	phaseInput dispatchPhase = iota
+	phaseTask dispatchPhase = iota
+	phaseInput
 	phaseSelect
 	phaseSending
 	phaseDone
@@ -40,6 +41,10 @@ type workerInfo struct {
 
 // tea.Msg types
 type workersLoadedMsg []workerInfo
+type ticketsLoadedMsg struct {
+	tickets []*ticket.Ticket
+	err     error
+}
 type dispatchSentMsg string
 type dispatchErrMsg struct{ err error }
 type aiRoutedMsg struct{ idx int }
@@ -49,6 +54,12 @@ type aiRoutedMsg struct{ idx int }
 type dispatchModel struct {
 	phase        dispatchPhase
 	input        textinput.Model
+	tickets      []*ticket.Ticket
+	ticketsReady bool
+	ticketErr    error
+	taskCursor   int // 0 = "new quick task", 1..N = ticket index
+	selected     *ticket.Ticket
+	taskText     string
 	workers      []workerInfo
 	workersReady bool
 	cursor       int // 0 = auto, 1..N = worker index
@@ -71,7 +82,7 @@ func newDispatchModel(session, ticketsDir string) dispatchModel {
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 
 	return dispatchModel{
-		phase:      phaseInput,
+		phase:      phaseTask,
 		input:      ti,
 		spinner:    sp,
 		session:    session,
@@ -84,6 +95,7 @@ func (m dispatchModel) Init() tea.Cmd {
 	return tea.Batch(
 		textinput.Blink,
 		loadWorkersCmd(m.session),
+		loadTicketsCmd(m.ticketsDir),
 	)
 }
 
@@ -101,9 +113,23 @@ func (m dispatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.workers = []workerInfo(msg)
 		m.workersReady = true
 		return m, nil
+	case ticketsLoadedMsg:
+		m.ticketErr = msg.err
+		m.tickets = msg.tickets
+		m.ticketsReady = true
+		total := len(m.tickets) + 1 // +1 for "new quick task"
+		if m.taskCursor >= total {
+			m.taskCursor = total - 1
+		}
+		if m.taskCursor < 0 {
+			m.taskCursor = 0
+		}
+		return m, nil
 	}
 
 	switch m.phase {
+	case phaseTask:
+		return m.updateTask(msg)
 	case phaseInput:
 		return m.updateInput(msg)
 	case phaseSelect:
@@ -121,14 +147,70 @@ func (m dispatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m dispatchModel) updateTask(msg tea.Msg) (tea.Model, tea.Cmd) {
+	total := len(m.tickets) + 1 // +1 for "new quick task"
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "ctrl+c", "esc", "q":
+			return m, tea.Quit
+		case "r":
+			return m, tea.Batch(
+				loadWorkersCmd(m.session),
+				loadTicketsCmd(m.ticketsDir),
+			)
+		case "up", "k":
+			if m.taskCursor > 0 {
+				m.taskCursor--
+			}
+		case "down", "j":
+			if m.taskCursor < total-1 {
+				m.taskCursor++
+			}
+		case "n":
+			m.selected = nil
+			m.taskText = ""
+			m.input.SetValue("")
+			m.input.Focus()
+			m.phase = phaseInput
+			return m, nil
+		case "enter":
+			if m.taskCursor == 0 {
+				m.selected = nil
+				m.taskText = ""
+				m.input.SetValue("")
+				m.input.Focus()
+				m.phase = phaseInput
+				return m, nil
+			}
+			if !m.ticketsReady || m.ticketErr != nil || len(m.tickets) == 0 {
+				return m, nil
+			}
+			m.selected = m.tickets[m.taskCursor-1]
+			m.taskText = m.selected.Title
+			m.cursor = 0
+			m.phase = phaseSelect
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 func (m dispatchModel) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			m.phase = phaseTask
+			return m, nil
 		case "enter":
-			if strings.TrimSpace(m.input.Value()) != "" {
+			task := strings.TrimSpace(m.input.Value())
+			if task != "" {
+				m.selected = nil
+				m.taskText = task
+				m.cursor = 0
 				m.phase = phaseSelect
 				return m, nil
 			}
@@ -147,7 +229,11 @@ func (m dispatchModel) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			m.phase = phaseInput
+			if m.selected != nil {
+				m.phase = phaseTask
+			} else {
+				m.phase = phaseInput
+			}
 			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
@@ -158,7 +244,7 @@ func (m dispatchModel) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "enter":
-			if m.workersReady {
+			if m.workersReady && len(m.workers) > 0 {
 				return m.doSend()
 			}
 		}
@@ -167,8 +253,14 @@ func (m dispatchModel) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m dispatchModel) doSend() (tea.Model, tea.Cmd) {
+	if len(m.workers) == 0 {
+		m.phase = phaseDispatchError
+		m.err = fmt.Errorf("no workers found — is the swarm running?")
+		return m, nil
+	}
 	m.phase = phaseSending
-	task := m.input.Value()
+	task := m.currentTask()
+	selected := m.selected
 	cursor := m.cursor
 	workers := m.workers
 	ticketsDir := m.ticketsDir
@@ -188,8 +280,11 @@ func (m dispatchModel) doSend() (tea.Model, tea.Cmd) {
 				return aiRoutedMsg{idx: idx}
 			}
 			w := workers[cursor-1]
-			if err := sendTaskToWorker(task, &w, ticketsDir); err != nil {
+			if err := sendTaskToWorker(task, selected, &w, ticketsDir); err != nil {
 				return dispatchErrMsg{err}
+			}
+			if selected != nil {
+				return dispatchSentMsg(fmt.Sprintf("Ticket %s sent to %s (%s)", selected.ID, w.name, w.cliType))
 			}
 			return dispatchSentMsg(fmt.Sprintf("Task sent to %s (%s)", w.name, w.cliType))
 		},
@@ -204,13 +299,22 @@ func (m dispatchModel) updateSending(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case aiRoutedMsg:
 		idx := msg.idx
-		task := m.input.Value()
+		task := m.currentTask()
+		selected := m.selected
 		workers := m.workers
 		ticketsDir := m.ticketsDir
+		if idx < 0 || idx >= len(workers) {
+			m.phase = phaseDispatchError
+			m.err = fmt.Errorf("no eligible workers found")
+			return m, nil
+		}
 		return m, func() tea.Msg {
 			w := workers[idx]
-			if err := sendTaskToWorker(task, &w, ticketsDir); err != nil {
+			if err := sendTaskToWorker(task, selected, &w, ticketsDir); err != nil {
 				return dispatchErrMsg{err}
+			}
+			if selected != nil {
+				return dispatchSentMsg(fmt.Sprintf("AI routed ticket %s to %s (%s)", selected.ID, w.name, w.cliType))
 			}
 			return dispatchSentMsg(fmt.Sprintf("AI routed task to %s (%s)", w.name, w.cliType))
 		}
@@ -239,6 +343,10 @@ var (
 	dMutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	dCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	dAutoStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true)
+	dTodoStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	dProgStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
+	dDoneStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	dBlockStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	dNameStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	dCLIStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
 	dIdleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("40"))
@@ -263,17 +371,66 @@ func (m dispatchModel) View() string {
 		"  " + dHintStyle.Render("Ctrl+b D or Alt+5 to jump here")
 
 	switch m.phase {
+	case phaseTask:
+		var sb strings.Builder
+		sb.WriteString(dLabelStyle.Render("Backlog") + "\n")
+		cur := "  "
+		if m.taskCursor == 0 {
+			cur = dCursorStyle.Render("▶ ")
+		}
+		sb.WriteString(cur + dAutoStyle.Render("+ New quick task") +
+			dMutedStyle.Render("  type and dispatch ad-hoc work") + "\n")
+
+		switch {
+		case !m.ticketsReady:
+			sb.WriteString(dMutedStyle.Render("  Loading tickets…") + "\n")
+		case m.ticketErr != nil:
+			sb.WriteString("  " + dErrStyle.Render("Failed to load tickets: "+truncate(m.ticketErr.Error(), innerWidth-10)) + "\n")
+		case len(m.tickets) == 0:
+			sb.WriteString(dMutedStyle.Render("  No tickets found.") + "\n")
+		default:
+			maxTitle := innerWidth - 44
+			if maxTitle < 12 {
+				maxTitle = 12
+			}
+			for i, t := range m.tickets {
+				cur = "  "
+				if m.taskCursor == i+1 {
+					cur = dCursorStyle.Render("▶ ")
+				}
+				assigned := t.AssignedTo
+				if assigned == "" {
+					assigned = "-"
+				}
+				sb.WriteString(fmt.Sprintf("%s[%s] p%-2d %-11s %-10s %s\n",
+					cur,
+					t.ID,
+					t.Priority,
+					renderTicketStatus(t.Status),
+					truncate(assigned, 10),
+					truncate(t.Title, maxTitle),
+				))
+			}
+		}
+
+		sb.WriteString("\n" + dMutedStyle.Render("↑↓/jk navigate · Enter select · n new task · r reload · Esc quit"))
+		return header + "\n" + box.Render(sb.String()) + "\n"
+
 	case phaseInput:
 		m.input.Width = innerWidth - 4
-		body := dLabelStyle.Render("Task") + "\n" +
+		body := dLabelStyle.Render("New quick task") + "\n" +
 			m.input.View() + "\n\n" +
-			dMutedStyle.Render("Enter to continue · Esc to cancel")
+			dMutedStyle.Render("Enter to choose agent · Esc back")
 		return header + "\n" + box.Render(body) + "\n"
 
 	case phaseSelect:
 		var sb strings.Builder
+		if m.selected != nil {
+			sb.WriteString(dLabelStyle.Render("Ticket") + "\n")
+			sb.WriteString(dTodoStyle.Render(fmt.Sprintf("[%s] %s", m.selected.ID, m.selected.Title)) + "\n\n")
+		}
 		sb.WriteString(dLabelStyle.Render("Task") + "\n")
-		sb.WriteString(dNameStyle.Render(truncate(m.input.Value(), innerWidth-6)) + "\n\n")
+		sb.WriteString(dNameStyle.Render(truncate(m.currentTask(), innerWidth-6)) + "\n\n")
 		sb.WriteString(dLabelStyle.Render("Route to") + "\n")
 
 		cur := "  "
@@ -335,12 +492,49 @@ func truncate(s string, max int) string {
 	return s[:max-1] + "…"
 }
 
+func (m dispatchModel) currentTask() string {
+	if strings.TrimSpace(m.taskText) != "" {
+		return m.taskText
+	}
+	if m.selected != nil {
+		return m.selected.Title
+	}
+	return strings.TrimSpace(m.input.Value())
+}
+
+func renderTicketStatus(status ticket.Status) string {
+	s := string(status)
+	switch status {
+	case ticket.StatusTodo:
+		return dTodoStyle.Render(s)
+	case ticket.StatusInProgress:
+		return dProgStyle.Render(s)
+	case ticket.StatusDone:
+		return dDoneStyle.Render(s)
+	case ticket.StatusBlocked:
+		return dBlockStyle.Render(s)
+	default:
+		return dMutedStyle.Render(s)
+	}
+}
+
 // ── Worker discovery ──────────────────────────────────────────────────────────
 
 func loadWorkersCmd(session string) tea.Cmd {
 	return func() tea.Msg {
 		workers, _ := discoverWorkers(session)
 		return workersLoadedMsg(workers)
+	}
+}
+
+func loadTicketsCmd(ticketsDir string) tea.Cmd {
+	return func() tea.Msg {
+		if ticketsDir == "" {
+			return ticketsLoadedMsg{tickets: nil}
+		}
+		store := ticket.NewStore(ticketsDir)
+		tickets, err := store.List()
+		return ticketsLoadedMsg{tickets: tickets, err: err}
 	}
 }
 
@@ -458,8 +652,27 @@ func firstIdleWorker(workers []workerInfo) int {
 
 // ── Send ──────────────────────────────────────────────────────────────────────
 
-// sendTaskToWorker writes a ticket to the worker's worktree and injects the task into its pane.
-func sendTaskToWorker(task string, w *workerInfo, ticketsDir string) error {
+// sendTaskToWorker assigns an existing ticket (if provided) or creates a new one, then prompts the worker.
+func sendTaskToWorker(task string, selected *ticket.Ticket, w *workerInfo, ticketsDir string) error {
+	if selected != nil {
+		t := selected
+		if ticketsDir != "" {
+			store := ticket.NewStore(ticketsDir)
+			if err := store.Assign(t.ID, w.name); err != nil {
+				return err
+			}
+			if fresh, err := store.Get(t.ID); err == nil && fresh != nil {
+				t = fresh
+			}
+		}
+		if w.worktreeDir != "" {
+			if err := ticket.WriteCurrentTicket(w.worktreeDir, t); err == nil {
+				return tmux.SendKeys(w.paneID, "Read CURRENT_TICKET.md and implement the task")
+			}
+		}
+		return tmux.SendKeys(w.paneID, fmt.Sprintf("Ticket %s: %s", t.ID, task))
+	}
+
 	if ticketsDir != "" && w.worktreeDir != "" {
 		store := ticket.NewStore(ticketsDir)
 		t, err := store.Add(task, task, "dispatch")
@@ -480,7 +693,7 @@ func init() {
 
 var dispatchCmd = &cobra.Command{
 	Use:   "dispatch",
-	Short: "Open the task-dispatch TUI to send tasks to agents",
+	Short: "Open the dispatch TUI to route backlog tickets to agents",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		config.SetDefaults()
 		cfg, err := config.Load()
