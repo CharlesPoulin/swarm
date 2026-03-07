@@ -75,8 +75,8 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 | `Ctrl+b d` | Detach (stops monitors, prompts cleanup) |
 
 When `pm` is enabled, PM window has:
-- `tickets` pane: edit `.swarm/PM_TASK.md` and ticket files under `.swarm/tickets/`
-- `worker-N (pm)` pane: PM chat that can create/update tickets
+- `tickets` pane: opens `.swarm/PM_KANBAN.md` plus `.swarm/PM_FOCUS.md` (bottom split), with ticket files under `.swarm/tickets/`
+- `worker-N (pm)` pane: Codex PM chat for creating/updating/refining tickets
 
 ## PR Review
 

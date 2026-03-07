@@ -524,16 +524,17 @@ func hubEditorCmd() string {
 }
 
 func pmTicketsWorkbenchCmd(repoRoot string) string {
-	taskPath := filepath.Join(repoRoot, ".swarm", "PM_TASK.md")
+	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
+	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
 	if commandExists("nvim") {
-		return fmt.Sprintf("mkdir -p '%s' && nvim '%s' '+Lexplore %s'", ticketsDir, taskPath, ticketsDir)
+		return fmt.Sprintf("mkdir -p '%s' && nvim '%s' '+Lexplore %s' '+botright 14split %s'", ticketsDir, kanbanPath, ticketsDir, focusPath)
 	}
 	if commandExists("vim") {
-		return fmt.Sprintf("mkdir -p '%s' && vim '%s'", ticketsDir, taskPath)
+		return fmt.Sprintf("mkdir -p '%s' && vim '%s' '+botright 14split %s'", ticketsDir, kanbanPath, focusPath)
 	}
 	if commandExists("nano") {
-		return fmt.Sprintf("mkdir -p '%s' && nano '%s'", ticketsDir, taskPath)
+		return fmt.Sprintf("mkdir -p '%s' && nano '%s'", ticketsDir, kanbanPath)
 	}
 	return fmt.Sprintf("mkdir -p '%s' && ls -la '%s' && echo 'Edit ticket files under %s manually.' && exec bash", ticketsDir, ticketsDir, ticketsDir)
 }
@@ -749,13 +750,21 @@ const pmTaskTemplate = `# PM Task
 - Question:
 `
 
-// writePMArtifacts ensures PM prompt/task files and ticket directory exist under repoRoot/.swarm.
+const pmFocusEmpty = `# Focus Ticket
+
+No active tickets yet.
+Create one with:
+claude-swarm ticket add --title "..." --desc "..."
+`
+
+// writePMArtifacts ensures PM prompt/task/board files and ticket directory exist under repoRoot/.swarm.
 func writePMArtifacts(repoRoot string) error {
 	dir := filepath.Join(repoRoot, ".swarm")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "tickets"), 0o755); err != nil {
+	ticketsDir := filepath.Join(dir, "tickets")
+	if err := os.MkdirAll(ticketsDir, 0o755); err != nil {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(dir, "PM_PROMPT.md"), []byte(pmPrompt), 0o644); err != nil {
@@ -763,9 +772,123 @@ func writePMArtifacts(repoRoot string) error {
 	}
 	taskPath := filepath.Join(dir, "PM_TASK.md")
 	if _, err := os.Stat(taskPath); os.IsNotExist(err) {
-		return os.WriteFile(taskPath, []byte(pmTaskTemplate), 0o644)
+		if err := os.WriteFile(taskPath, []byte(pmTaskTemplate), 0o644); err != nil {
+			return err
+		}
+	}
+	return writePMBoard(repoRoot, taskPath, ticketsDir)
+}
+
+func writePMBoard(repoRoot, taskPath, ticketsDir string) error {
+	store := ticket.NewStore(ticketsDir)
+	tickets, err := store.List()
+	if err != nil {
+		return err
+	}
+
+	var todo, inProgress, blocked, done []*ticket.Ticket
+	for _, t := range tickets {
+		switch t.Status {
+		case ticket.StatusTodo:
+			todo = append(todo, t)
+		case ticket.StatusInProgress:
+			inProgress = append(inProgress, t)
+		case ticket.StatusBlocked:
+			blocked = append(blocked, t)
+		case ticket.StatusDone:
+			done = append(done, t)
+		default:
+			todo = append(todo, t)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("# PM Kanban\n\n")
+	b.WriteString("This file is auto-generated at swarm startup.\n")
+	b.WriteString("Edit ticket files in `.swarm/tickets/` for manual updates.\n")
+	b.WriteString("Planning doc: `.swarm/PM_TASK.md`.\n\n")
+	writePMSection(&b, "Todo", todo)
+	writePMSection(&b, "In Progress", inProgress)
+	writePMSection(&b, "Blocked", blocked)
+	writePMSection(&b, "Done", done)
+	if err := os.WriteFile(filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md"), []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+
+	focus := pickPMFocusTicket(todo, inProgress, blocked, done)
+	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
+	if focus == nil {
+		return os.WriteFile(focusPath, []byte(pmFocusEmpty), 0o644)
+	}
+	front := fmt.Sprintf("# Focus Ticket\n\n## [%s] %s\n\nStatus: `%s`  Priority: `%d`\n\n",
+		focus.ID, focus.Title, focus.Status, focus.Priority)
+	body := strings.TrimSpace(focus.Body)
+	if body == "" {
+		body = "_No description provided._"
+	}
+	body = trimLines(body, 28)
+	if p := ticketFilePathByID(ticketsDir, focus.ID); p != "" {
+		front += fmt.Sprintf("File: `%s`\n\n", p)
+	}
+	return os.WriteFile(focusPath, []byte(front+body+"\n"), 0o644)
+}
+
+func writePMSection(b *strings.Builder, title string, tickets []*ticket.Ticket) {
+	b.WriteString("## " + title + "\n")
+	if len(tickets) == 0 {
+		b.WriteString("- _none_\n\n")
+		return
+	}
+	for _, t := range tickets {
+		assignee := t.AssignedTo
+		if assignee == "" {
+			assignee = "-"
+		}
+		b.WriteString(fmt.Sprintf("- [%s] %s (p%d, assigned: %s)\n", t.ID, t.Title, t.Priority, assignee))
+	}
+	b.WriteString("\n")
+}
+
+func pickPMFocusTicket(todo, inProgress, blocked, done []*ticket.Ticket) *ticket.Ticket {
+	if len(inProgress) > 0 {
+		return inProgress[0]
+	}
+	if len(todo) > 0 {
+		return todo[0]
+	}
+	if len(blocked) > 0 {
+		return blocked[0]
+	}
+	if len(done) > 0 {
+		return done[0]
 	}
 	return nil
+}
+
+func trimLines(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= max {
+		return s
+	}
+	return strings.Join(lines[:max], "\n") + "\n..."
+}
+
+func ticketFilePathByID(ticketsDir, id string) string {
+	entries, err := os.ReadDir(ticketsDir)
+	if err != nil {
+		return ""
+	}
+	prefix := id + "-"
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".md") {
+			return filepath.Join(ticketsDir, name)
+		}
+	}
+	return ""
 }
 
 // assignTicketsToWorkers assigns the next N todo tickets to non-PM workers
@@ -1036,8 +1159,7 @@ func cliCmdFor(cfg *config.Config, worker, worktreeDir, ticketFile string) strin
 	case "spare":
 		return "echo 'Spare pane ready.' && exec bash"
 	case "pm":
-		promptPath := filepath.Join(worktreeDir, ".swarm", "PM_PROMPT.md")
-		return fmt.Sprintf(`codex "$(cat '%s')"`, promptPath)
+		return "echo 'PM chat ready. Context files: .swarm/PM_TASK.md, .swarm/PM_KANBAN.md, .swarm/PM_FOCUS.md' && codex"
 	}
 	cmd := cliName
 	if model != "" {
