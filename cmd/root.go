@@ -30,7 +30,7 @@ var rootCmd = &cobra.Command{
 	Version: Version,
 	Long: `claude-swarm creates a tmux session with:
   - Window 1 "swarm": 2x3 agents by default
-  - Window 2 "hub":   editor (left) + git view (right)`,
+  - Window 2 "hub":   editor (left) + review/git view (right)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -194,7 +194,7 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
-	nvimID, lgID, err := setupHubWindow(cfg, repoRoot)
+	nvimID, reviewID, err := setupHubWindow(cfg, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
-	bindKeybindings(cfg, nvimID, lgID)
+	bindKeybindings(cfg, nvimID, reviewID)
 
 	return runAndMonitor(cfg, workers, worktreeDirs, paneIDs, w)
 }
@@ -254,6 +254,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
 			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
 			"#[fg=colour39]Alt+3#[fg=colour245]:usage  "+
+			"#[fg=colour39]Ctrl+b p#[fg=colour245]:review  "+
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
@@ -354,9 +355,9 @@ func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]str
 	return workerPaneIDs, nil
 }
 
-// setupHubWindow creates the "hub" window with editor (left) and git view (right).
-// Returns (editorPaneID, gitPaneID, error).
-func setupHubWindow(cfg *config.Config, repoRoot string) (editorPaneID, gitPaneID string, err error) {
+// setupHubWindow creates the "hub" window with editor (left) and review/git view (right).
+// Returns (editorPaneID, rightPaneID, error).
+func setupHubWindow(cfg *config.Config, repoRoot string) (editorPaneID, rightPaneID string, err error) {
 	if err = tmux.NewWindowNoIndex(cfg.Session, repoRoot, "hub"); err != nil {
 		return
 	}
@@ -366,21 +367,16 @@ func setupHubWindow(cfg *config.Config, repoRoot string) (editorPaneID, gitPaneI
 		return
 	}
 
-	gitPaneID, err = tmux.SplitWindowGetPaneID(editorPaneID, repoRoot, 50, true)
+	rightPaneID, err = tmux.SplitWindowGetPaneID(editorPaneID, repoRoot, 50, true)
 	if err != nil {
 		err = fmt.Errorf("splitting hub window: %w", err)
 		return
 	}
 
 	_ = tmux.SetPaneTitle(editorPaneID, "editor")
-	_ = tmux.SetPaneTitle(gitPaneID, "git")
+	_ = tmux.SetPaneTitle(rightPaneID, "review")
 	_ = tmux.SendKeys(editorPaneID, hubEditorCmd())
-
-	if commandExists("lazygit") {
-		_ = tmux.SendKeys(gitPaneID, "lazygit")
-	} else {
-		_ = tmux.SendKeys(gitPaneID, "git status -sb && echo && git log --graph --oneline --decorate -20 && exec bash")
-	}
+	_ = tmux.SendKeys(rightPaneID, hubRightPaneCmd(cfg))
 
 	_ = tmux.SelectPane(editorPaneID)
 	return
@@ -396,8 +392,33 @@ func hubEditorCmd() string {
 	return "echo 'nvim/code not found; editor pane is shell.' && exec bash"
 }
 
+func hubRightPaneCmd(cfg *config.Config) string {
+	mode := strings.ToLower(strings.TrimSpace(cfg.HubMode))
+	if mode == "git" {
+		if commandExists("lazygit") {
+			return "lazygit"
+		}
+		return "git status -sb && echo && git log --graph --oneline --decorate -20 && exec bash"
+	}
+
+	refreshSecs := cfg.ReviewRefreshSecs
+	if refreshSecs <= 0 {
+		refreshSecs = cfg.MonitorInterval
+	}
+	if refreshSecs <= 0 {
+		refreshSecs = 30
+	}
+	if commandExists("gh") {
+		return reviewWindowCommand(cfg.Session, refreshSecs)
+	}
+	if commandExists("lazygit") {
+		return "echo 'gh CLI not found; falling back to lazygit.' && lazygit"
+	}
+	return "echo 'gh CLI not found. Install gh and run: gh auth login' && git status -sb && exec bash"
+}
+
 // bindKeybindings sets session-scoped tmux keybindings.
-func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
+func bindKeybindings(cfg *config.Config, hubPaneID, rightPaneID string) {
 	// Alt+1 → swarm (agents), Alt+2 → hub
 	_ = tmux.BindKey(cfg.Session, "-n", "M-1",
 		fmt.Sprintf("select-window -t '%s:swarm'", cfg.Session))
@@ -423,13 +444,16 @@ func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
 	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
 		fmt.Sprintf("kill-session -t '%s'", cfg.Session))
 
-	// Ctrl+b e → editor, Ctrl+b g → git
+	// Ctrl+b e → editor, Ctrl+b g/p → right pane (review/git)
 	_ = tmux.BindKey(cfg.Session, "", "e",
 		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
 			cfg.Session, hubPaneID))
 	_ = tmux.BindKey(cfg.Session, "", "g",
 		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
-			cfg.Session, gitPaneID))
+			cfg.Session, rightPaneID))
+	_ = tmux.BindKey(cfg.Session, "", "p",
+		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
+			cfg.Session, rightPaneID))
 }
 
 func nvimBasicsPopupCommand() string {
@@ -443,7 +467,7 @@ func runAndMonitor(cfg *config.Config, workers, worktreeDirs, paneIDs []string, 
 	fmt.Printf("✅  All %d instances launched!\n", len(workers))
 	fmt.Printf("🔍  Monitors active (log: /tmp/claude-swarm-%s.log)\n", cfg.Session)
 	fmt.Printf("📎  Attaching to session %q…\n", cfg.Session)
-	fmt.Println("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Agents: Alt+1")
+	fmt.Println("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Review: Ctrl+b p  |  Agents: Alt+1")
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
