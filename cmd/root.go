@@ -19,8 +19,8 @@ import (
 	"github.com/spf13/viper"
 )
 
-const (
-	Version = "v1.0.1"
+var (
+	Version = "dev"
 	Repo    = "github.com/cpoulin/claude-swarm"
 )
 
