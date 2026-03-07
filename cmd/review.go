@@ -86,7 +86,7 @@ func runReview(cmd *cobra.Command, args []string) error {
 		session = cfg.Session
 	}
 	// Validate only when user explicitly targets a session.
-	if cmd.Flags().Changed("session") && session != "" && tmux.HasSession(session) == false {
+	if cmd.Flags().Changed("session") && session != "" && !tmux.HasSession(session) {
 		return fmt.Errorf("session %q not found", session)
 	}
 
