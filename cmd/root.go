@@ -329,19 +329,12 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 		pmHint = "  #[fg=colour39]Alt+4#[fg=colour245]:pm"
 	}
 	statusRight := fmt.Sprintf(
-		"#[bg=colour235,fg=colour245] %d agents  "+
-			"#[fg=colour33]v%s#[fg=colour245]  "+
-			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
-			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
-			"#[fg=colour39]Alt+3#[fg=colour245]:usage  "+
+		"#[bg=colour235,fg=colour33]v%s#[fg=colour245]  "+
+			"#[fg=colour245]%d agents  "+
 			"%s"+
-			"#[fg=colour39]Ctrl+b p#[fg=colour245]:review  "+
-			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
-			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
-			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
 			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit  "+
 			"#[fg=colour39]%s",
-		len(workers), Version, pmHint, Repo)
+		Version, len(workers), pmHint, Repo)
 
 	statusOpts := [][2]string{
 		{"status", "on"},
