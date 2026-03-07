@@ -260,7 +260,7 @@ func (m dispatchModel) View() string {
 		Width(innerWidth)
 
 	header := dTitleStyle.Render("claude-swarm dispatch") +
-		"  " + dHintStyle.Render("Ctrl+b D to open from inside swarm")
+		"  " + dHintStyle.Render("Ctrl+b D or Alt+5 to jump here")
 
 	switch m.phase {
 	case phaseInput:
@@ -502,4 +502,8 @@ var dispatchCmd = &cobra.Command{
 		_, err = p.Run()
 		return err
 	},
+}
+
+func dispatchWindowCommand(session string) string {
+	return fmt.Sprintf("claude-swarm dispatch --session %s", shellQuote(session))
 }
