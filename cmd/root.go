@@ -336,7 +336,7 @@ func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]str
 	for i, paneID := range workerPaneIDs {
 		idx := i % len(workers)
 		_ = tmux.SetPaneTitle(paneID, paneTitle(i+1, workers[idx]))
-		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx])))
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx], worktreeDirs[idx])))
 	}
 	_ = tmux.SelectPane(topLeft)
 
@@ -443,7 +443,7 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, p
 		if cliName == "spare" {
 			continue
 		}
-		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx]), w)
+		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx], worktreeDirs[idx]), w)
 	}
 
 	attachCmd := exec.Command("tmux", "attach-session", "-t", cfg.Session)
@@ -497,7 +497,7 @@ func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 			return fmt.Errorf("creating pane for worker %d: %w", i, err)
 		}
 		_ = tmux.SetPaneTitle(newPane, paneTitle(i, cliType))
-		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType)))
+		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType, dir)))
 	}
 
 	fmt.Printf("✅  Added %d worker(s) to session %q.\n", len(workers), cfg.Session)
@@ -681,7 +681,7 @@ func uniqueWorkerTypes(workers []string) []string {
 
 // cliCmdFor returns the full CLI invocation for a worker, including model and extra flags.
 // Worker may be "gemini:gemini-2.0-flash" or plain "claude".
-func cliCmdFor(cfg *config.Config, worker string) string {
+func cliCmdFor(cfg *config.Config, worker, worktreeDir string) string {
 	cliName, model := parseWorker(worker)
 	if cliName == "spare" {
 		return "echo 'Spare pane ready.' && exec bash"
@@ -693,5 +693,18 @@ func cliCmdFor(cfg *config.Config, worker string) string {
 	if cfg.CLIFlags != "" {
 		cmd += " " + cfg.CLIFlags
 	}
+	if cliName == "gemini" {
+		if home := geminiCLIHomeForWorktree(worktreeDir); home != "" {
+			cmd = fmt.Sprintf("GEMINI_CLI_HOME='%s' %s", home, cmd)
+		}
+	}
 	return cmd
+}
+
+func geminiCLIHomeForWorktree(worktreeDir string) string {
+	base := filepath.Base(filepath.Clean(worktreeDir))
+	if !strings.HasPrefix(base, ".wt-") {
+		return ""
+	}
+	return filepath.Join(os.Getenv("HOME"), ".gemini-"+strings.TrimPrefix(base, "."))
 }
