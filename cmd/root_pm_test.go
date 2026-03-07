@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,6 +79,63 @@ func TestCliCmdForPMBootstrapModes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
+	t.Setenv("PATH", makePathWithTools(t, "nvim"))
+
+	repoRoot := "/tmp/repo"
+	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
+	cmd := pmTicketsWorkbenchCmd(repoRoot)
+
+	if !strings.Contains(cmd, "mkdir -p '"+ticketsDir+"' && cd '"+ticketsDir+"' && nvim") {
+		t.Fatalf("expected nvim tickets workspace command, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "+Lexplore") || !strings.Contains(cmd, "+wincmd l") || !strings.Contains(cmd, "+enew") {
+		t.Fatalf("expected nvim explorer/edit split commands, got %q", cmd)
+	}
+}
+
+func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
+	t.Setenv("PATH", makePathWithTools(t, "vim"))
+
+	repoRoot := "/tmp/repo"
+	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
+	cmd := pmTicketsWorkbenchCmd(repoRoot)
+
+	if !strings.Contains(cmd, "mkdir -p '"+ticketsDir+"' && cd '"+ticketsDir+"' && vim") {
+		t.Fatalf("expected vim fallback command, got %q", cmd)
+	}
+	if strings.Contains(cmd, "nvim") {
+		t.Fatalf("expected no nvim in vim fallback, got %q", cmd)
+	}
+}
+
+func TestPMTicketsWorkbenchCmd_NoEditorsFallback(t *testing.T) {
+	t.Setenv("PATH", makePathWithTools(t))
+
+	repoRoot := "/tmp/repo"
+	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
+	cmd := pmTicketsWorkbenchCmd(repoRoot)
+
+	if !strings.Contains(cmd, "ls -la '"+ticketsDir+"'") {
+		t.Fatalf("expected shell fallback listing tickets dir, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "Edit ticket files under "+ticketsDir+" manually.") {
+		t.Fatalf("expected manual-edit guidance, got %q", cmd)
+	}
+}
+
+func makePathWithTools(t *testing.T, tools ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range tools {
+		p := filepath.Join(dir, tool)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("writing fake tool %s: %v", tool, err)
+		}
+	}
+	return dir
 }
 
 func TestNextAssignedToWorker(t *testing.T) {

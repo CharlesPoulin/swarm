@@ -527,17 +527,15 @@ func hubEditorCmd() string {
 }
 
 func pmTicketsWorkbenchCmd(repoRoot string) string {
-	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
-	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
 	if commandExists("nvim") {
-		return fmt.Sprintf("mkdir -p '%s' && nvim '%s' '+botright 14split %s'", ticketsDir, kanbanPath, focusPath)
+		return fmt.Sprintf("mkdir -p '%s' && cd '%s' && nvim '+Lexplore' '+wincmd l' '+enew'", ticketsDir, ticketsDir)
 	}
 	if commandExists("vim") {
-		return fmt.Sprintf("mkdir -p '%s' && vim '%s' '+botright 14split %s'", ticketsDir, kanbanPath, focusPath)
+		return fmt.Sprintf("mkdir -p '%s' && cd '%s' && vim '+Lexplore' '+wincmd l' '+enew'", ticketsDir, ticketsDir)
 	}
 	if commandExists("nano") {
-		return fmt.Sprintf("mkdir -p '%s' && nano '%s'", ticketsDir, kanbanPath)
+		return fmt.Sprintf("mkdir -p '%s' && cd '%s' && nano", ticketsDir, ticketsDir)
 	}
 	return fmt.Sprintf("mkdir -p '%s' && ls -la '%s' && echo 'Edit ticket files under %s manually.' && exec bash", ticketsDir, ticketsDir, ticketsDir)
 }
