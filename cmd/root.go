@@ -197,6 +197,10 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
+	if err := setupUsageWindow(cfg); err != nil {
+		return err
+	}
+
 	bindKeybindings(cfg, nvimID, lgID)
 
 	return runAndMonitor(cfg, repoRoot, workers, worktreeDirs, paneIDs, w)
@@ -246,6 +250,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 		"#[bg=colour235,fg=colour245] %d agents  "+
 			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
 			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
+			"#[fg=colour39]Alt+3#[fg=colour245]:usage  "+
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
@@ -271,6 +276,17 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 	for _, opt := range statusOpts {
 		_ = tmux.SetOption(cfg.Session, opt[0], opt[1])
 	}
+}
+
+func setupUsageWindow(cfg *config.Config) error {
+	if err := tmux.NewWindowNoIndex(cfg.Session, ".", "usage"); err != nil {
+		return fmt.Errorf("creating usage window: %w", err)
+	}
+	refreshSecs := cfg.MonitorInterval
+	if refreshSecs <= 0 {
+		refreshSecs = 30
+	}
+	return tmux.SendKeys(fmt.Sprintf("%s:usage", cfg.Session), usageWindowCommand(cfg.Session, refreshSecs))
 }
 
 // setupSwarmWindow creates worker panes in the "swarm" window and launches each AI CLI.
@@ -328,7 +344,7 @@ func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]str
 	for i, paneID := range workerPaneIDs {
 		idx := i % len(workers)
 		_ = tmux.SetPaneTitle(paneID, paneTitle(i+1, workers[idx]))
-		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx])))
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx], worktreeDirs[idx])))
 	}
 	_ = tmux.SelectPane(topLeft)
 
@@ -384,6 +400,8 @@ func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
 		fmt.Sprintf("select-window -t '%s:swarm'", cfg.Session))
 	_ = tmux.BindKey(cfg.Session, "-n", "M-2",
 		fmt.Sprintf("select-window -t '%s:hub'", cfg.Session))
+	_ = tmux.BindKey(cfg.Session, "-n", "M-3",
+		fmt.Sprintf("select-window -t '%s:usage'", cfg.Session))
 
 	// Ctrl+b v → nvim basics quick reference
 	_ = tmux.BindKey(cfg.Session, "", "v", nvimBasicsPopupCommand())
@@ -422,7 +440,7 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, p
 	fmt.Printf("✅  All %d instances launched!\n", len(workers))
 	fmt.Printf("🔍  Monitors active (log: /tmp/claude-swarm-%s.log)\n", cfg.Session)
 	fmt.Printf("📎  Attaching to session %q…\n", cfg.Session)
-	fmt.Println("    Detach: Ctrl+b d  |  Hub: Alt+2  |  Agents: Alt+1")
+	fmt.Println("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Agents: Alt+1")
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -433,7 +451,7 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, p
 		if cliName == "spare" {
 			continue
 		}
-		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx]), w)
+		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx], worktreeDirs[idx]), w)
 	}
 
 	attachCmd := exec.Command("tmux", "attach-session", "-t", cfg.Session)
@@ -487,7 +505,7 @@ func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 			return fmt.Errorf("creating pane for worker %d: %w", i, err)
 		}
 		_ = tmux.SetPaneTitle(newPane, paneTitle(i, cliType))
-		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType)))
+		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType, dir)))
 	}
 
 	fmt.Printf("✅  Added %d worker(s) to session %q.\n", len(workers), cfg.Session)
@@ -671,7 +689,7 @@ func uniqueWorkerTypes(workers []string) []string {
 
 // cliCmdFor returns the full CLI invocation for a worker, including model and extra flags.
 // Worker may be "gemini:gemini-2.0-flash" or plain "claude".
-func cliCmdFor(cfg *config.Config, worker string) string {
+func cliCmdFor(cfg *config.Config, worker, worktreeDir string) string {
 	cliName, model := parseWorker(worker)
 	if cliName == "spare" {
 		return "echo 'Spare pane ready.' && exec bash"
@@ -683,5 +701,18 @@ func cliCmdFor(cfg *config.Config, worker string) string {
 	if cfg.CLIFlags != "" {
 		cmd += " " + cfg.CLIFlags
 	}
+	if cliName == "gemini" {
+		if home := geminiCLIHomeForWorktree(worktreeDir); home != "" {
+			cmd = fmt.Sprintf("GEMINI_CLI_HOME='%s' %s", home, cmd)
+		}
+	}
 	return cmd
+}
+
+func geminiCLIHomeForWorktree(worktreeDir string) string {
+	base := filepath.Base(filepath.Clean(worktreeDir))
+	if !strings.HasPrefix(base, ".wt-") {
+		return ""
+	}
+	return filepath.Join(os.Getenv("HOME"), ".gemini-"+strings.TrimPrefix(base, "."))
 }

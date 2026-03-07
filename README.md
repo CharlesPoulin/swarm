@@ -22,6 +22,7 @@ claude-swarm
 
 That's it. You get:
 - Window `0` — hub: nvim on the left, lazygit on the right
+- Window `usage` — live per-agent usage/limit dashboard
 - Windows `1–N` — one Claude per worktree on a fresh branch
 
 After merging a PR from a worker, reset that worktree back to `main` state:
@@ -59,6 +60,7 @@ monitor_interval: 30       # how often to check for usage-limit errors (secs)
 |-----|--------|
 | `Alt+0` | Hub window |
 | `Alt+1–9` | Worker windows |
+| `Alt+3` | Usage window |
 | `Ctrl+b e` | Jump to editor (nvim) |
 | `Ctrl+b g` | Jump to git (lazygit) |
 | `Ctrl+b v` | Show nvim basics (quick help) |
