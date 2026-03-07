@@ -80,6 +80,7 @@ type usageModel struct {
 	rows           []usageRow
 	lastErr        string
 	limitedHistory []int
+	collect        func(string) ([]usageRow, error)
 }
 
 func newUsageModel(session string, refresh time.Duration) usageModel {
@@ -98,7 +99,12 @@ func newUsageModel(session string, refresh time.Duration) usageModel {
 	styles.Selected = styles.Selected.Foreground(lipgloss.Color("229")).Background(lipgloss.Color("33")).Bold(true)
 	t.SetStyles(styles)
 
-	return usageModel{session: session, refresh: refresh, table: t}
+	return usageModel{
+		session: session,
+		refresh: refresh,
+		table:   t,
+		collect: collectUsageRows,
+	}
 }
 
 func (m usageModel) Init() tea.Cmd {
@@ -117,7 +123,7 @@ func (m usageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.table.SetHeight(msg.Height - 8)
 		}
 	case refreshMsg:
-		rows, err := collectUsageRows(m.session)
+		rows, err := m.collect(m.session)
 		if err != nil {
 			m.lastErr = err.Error()
 		} else {
