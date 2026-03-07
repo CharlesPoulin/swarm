@@ -439,11 +439,7 @@ func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]pan
 	for i, paneID := range workerPaneIDs {
 		idx := workerIdxs[i]
 		_ = tmux.SetPaneTitle(paneID, paneTitle(idx+1, workers[idx]))
-		ticketFile := ""
-		if _, err := os.Stat(filepath.Join(worktreeDirs[idx], "CURRENT_TICKET.md")); err == nil {
-			ticketFile = "CURRENT_TICKET.md"
-		}
-		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx], worktreeDirs[idx], ticketFile)))
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx], worktreeDirs[idx], "")))
 		mappings = append(mappings, paneMapping{PaneID: paneID, WorkerIndex: idx})
 	}
 	_ = tmux.SelectPane(topLeft)
