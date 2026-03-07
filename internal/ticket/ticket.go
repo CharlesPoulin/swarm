@@ -131,7 +131,7 @@ func (s *Store) List() ([]*Ticket, error) {
 	if err != nil {
 		return nil, err
 	}
-	var tickets []*Ticket
+	tickets := make([]*Ticket, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue

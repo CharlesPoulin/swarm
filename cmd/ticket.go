@@ -80,14 +80,20 @@ var ticketListCmd = &cobra.Command{
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tSTATUS\tPRI\tASSIGNED\tTITLE")
-		fmt.Fprintln(w, "----\t-----------\t---\t--------\t-----")
+		if _, err := fmt.Fprintln(w, "ID\tSTATUS\tPRI\tASSIGNED\tTITLE"); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(w, "----\t-----------\t---\t--------\t-----"); err != nil {
+			return err
+		}
 		for _, t := range tickets {
 			assigned := t.AssignedTo
 			if assigned == "" {
 				assigned = "-"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", t.ID, t.Status, t.Priority, assigned, t.Title)
+			if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", t.ID, t.Status, t.Priority, assigned, t.Title); err != nil {
+				return err
+			}
 		}
 		return w.Flush()
 	},
@@ -233,4 +239,3 @@ func extractCLIFromPaneTitle(title string) string {
 	}
 	return "claude"
 }
-

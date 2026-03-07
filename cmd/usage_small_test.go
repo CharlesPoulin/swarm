@@ -21,7 +21,7 @@ func TestRowFromPane(t *testing.T) {
 			content:   "ok",
 			checkedAt: "12:00:00",
 			want: usageRow{
-				Worker: 1, PaneID: "%3", CLI: "claude", Status: "active", ResumeIn: "-", CheckedAt: "12:00:00", SortKey: 0, HasSortKey: true,
+				Worker: 1, PaneID: "%3", CLI: "claude", Status: "active", StatusDetail: "⚡ active", LastLine: "ok", ResumeIn: "-", CheckedAt: "12:00:00", SortKey: 0, HasSortKey: true,
 			},
 		},
 		{
@@ -30,7 +30,7 @@ func TestRowFromPane(t *testing.T) {
 			content:   "exceeded your usage limit, retry in 1m30s",
 			checkedAt: "12:00:00",
 			want: usageRow{
-				Worker: 2, PaneID: "%11", CLI: "codex", Status: "usage-limited", ResumeIn: "1m30s", CheckedAt: "12:00:00", SortKey: 2, HasSortKey: true,
+				Worker: 2, PaneID: "%11", CLI: "codex", Status: "usage-limited", StatusDetail: "⚡ active", LastLine: "exceeded your usage limit, retry in 1m30s", ResumeIn: "1m30s", CheckedAt: "12:00:00", SortKey: 2, HasSortKey: true,
 			},
 		},
 	}
