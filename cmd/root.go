@@ -19,9 +19,15 @@ import (
 	"github.com/spf13/viper"
 )
 
+var (
+	Version = "dev"
+	Repo    = "github.com/cpoulin/claude-swarm"
+)
+
 var rootCmd = &cobra.Command{
-	Use:   "claude-swarm",
-	Short: "Spawn N AI CLI instances in git worktrees inside tmux",
+	Use:     "claude-swarm",
+	Short:   "Spawn N AI CLI instances in git worktrees inside tmux",
+	Version: Version,
 	Long: `claude-swarm creates a tmux session with:
   - Window 1 "swarm": 2x3 agents by default
   - Window 2 "hub":   editor (left) + git view (right)`,
@@ -146,7 +152,8 @@ func orchestrate(cfg *config.Config) error {
 	fmt.Printf("🌿  Branch  : %s\n", cfg.BaseBranch)
 	fmt.Printf("🤖  Instances: %d  (CLI mix: %s)\n", len(workers), strings.Join(uniqueWorkerTypes(workers), ","))
 	fmt.Printf("📺  Session : %s\n", cfg.Session)
-	fmt.Printf("📋  Log     : %s\n\n", logPath)
+	fmt.Printf("📋  Log     : %s\n", logPath)
+	fmt.Printf("📦  Version : %s\n\n", Version)
 
 	var w io.Writer = os.Stdout
 	if logFile != nil {
@@ -247,17 +254,18 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
-			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit",
-		len(workers))
+			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit  "+
+			"#[fg=colour33]%s#[fg=colour245] @ #[fg=colour39]%s",
+		len(workers), Version, Repo)
 
 	statusOpts := [][2]string{
 		{"status", "on"},
-		{"status-position", "bottom"},
+		{"status-position", "top"},
 		{"status-style", "bg=colour235,fg=colour245"},
 		{"status-left", statusLeft},
 		{"status-left-length", "30"},
 		{"status-right", statusRight},
-		{"status-right-length", "160"},
+		{"status-right-length", "200"},
 		{"window-status-format", "#[fg=colour245] #I:#W "},
 		{"window-status-current-format", "#[bg=colour33,fg=colour15,bold] #I:#W "},
 		{"pane-border-style", "fg=colour238"},

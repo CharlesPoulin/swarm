@@ -2,9 +2,12 @@ version: '3'
 
 tasks:
   build:
-    desc: Build the claude-swarm Go binary
+    desc: Build the claude-swarm Go binary with auto-versioning
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
     cmds:
-      - go build -o claude-swarm .
+      - go build -ldflags="-X 'github.com/cpoulin/claude-swarm/cmd.Version={{.VERSION}}'" -o claude-swarm .
 
   test:
     desc: Run unit tests
