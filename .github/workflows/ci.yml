@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, feat/github-actions ]
+
+jobs:
+  ci:
+    name: Lint, Test, and Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: true
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Run Linter
+        run: golangci-lint run ./...
+
+      - name: Run Tests
+        run: task test
+
+      - name: Run Vet
+        run: task vet
+
+      - name: Build Binary
+        run: task build

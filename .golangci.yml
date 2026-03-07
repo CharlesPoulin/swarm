@@ -1,0 +1,27 @@
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - gosimple
+    - gofmt
+    - goimports
+    - misspell
+    - unparam
+    - prealloc
+    - whitespace
+    - bodyclose
+    - stylecheck
+
+run:
+  timeout: 5m
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - linters:
+        - stylecheck
+      text: "ST1000:" # Disable package comment requirement

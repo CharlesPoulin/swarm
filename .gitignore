@@ -1,1 +1,18 @@
 .wt-*/
+# Binaries
+claude-swarm
+claude-swarm.exe
+bin/
+
+# GoReleaser artifacts
+dist/
+
+# Logs
+*.log
+
+# Dependency directories
+vendor/
+
+# OS-specific
+.DS_Store
+Thumbs.db

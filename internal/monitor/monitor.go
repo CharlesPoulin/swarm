@@ -15,11 +15,10 @@ import (
 // paneID is the stable %N tmux pane identifier.
 func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, cliCmd string, w io.Writer) {
 	interval := time.Duration(cfg.MonitorInterval) * time.Second
-	detected := false
 
 	logf := func(format string, args ...any) {
 		msg := fmt.Sprintf(time.Now().UTC().Format("2006-01-02T15:04:05Z")+" "+format+"\n", args...)
-		fmt.Fprint(w, msg)
+		_, _ = fmt.Fprint(w, msg)
 	}
 
 	ticker := time.NewTicker(interval)
@@ -36,9 +35,7 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 			return // pane gone
 		}
 
-		if !detected && usagelimit.HasError(content) {
-			detected = true
-
+		if usagelimit.HasError(content) {
 			waitSecs := usagelimit.ExtractWaitSecs(content)
 			totalSecs := waitSecs + cfg.ResumeBufferSec
 			displayH := totalSecs / 3600
@@ -65,7 +62,6 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 			logf("[worker-%d] Resuming with %s --continue.", workerNum, cliCmd)
 			_ = tmux.SendKeys(paneID, cliCmd+" --continue")
 			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", workerNum))
-			detected = false
 		}
 	}
 }

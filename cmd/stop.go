@@ -77,4 +77,3 @@ func runStop(cmd *cobra.Command, args []string) error {
 	fmt.Printf("🧹  Cleanup done. Removed %d worktree(s), deleted %d branch(es).\n", removedWorktrees, deletedBranches)
 	return nil
 }
-
