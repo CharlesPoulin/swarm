@@ -78,6 +78,7 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 When `pm` is enabled, PM window has:
 - `tickets` pane: opens `.swarm/PM_KANBAN.md` plus `.swarm/PM_FOCUS.md` (bottom split), with ticket files under `.swarm/tickets/`
 - `worker-N (pm)` pane: Codex PM chat, bootstrapped from `.swarm/PM_PROMPT.md` by default (`pm_bootstrap_mode` controls this)
+- PM can pre-route tickets by setting `assigned_to: worker-N`; startup assignment now honors these first, then fills remaining workers from unassigned TODOs.
 
 ## PR Review
 

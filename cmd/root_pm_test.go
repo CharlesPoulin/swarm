@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cpoulin/claude-swarm/internal/config"
+	"github.com/cpoulin/claude-swarm/internal/ticket"
 )
 
 func TestNormalizePMBootstrapMode(t *testing.T) {
@@ -76,5 +77,37 @@ func TestCliCmdForPMBootstrapModes(t *testing.T) {
 				t.Fatalf("expected command to not contain %q, got %q", tc.notContain, cmd)
 			}
 		})
+	}
+}
+
+func TestNextAssignedToWorker(t *testing.T) {
+	tickets := []*ticket.Ticket{
+		{ID: "0001", Status: ticket.StatusTodo, AssignedTo: "worker-2"},
+		{ID: "0002", Status: ticket.StatusInProgress, AssignedTo: "worker-2"},
+		{ID: "0003", Status: ticket.StatusDone, AssignedTo: "worker-2"},
+		{ID: "0004", Status: ticket.StatusTodo, AssignedTo: "worker-1"},
+	}
+
+	if got := nextAssignedToWorker(tickets, "worker-2", map[string]bool{}); got == nil || got.ID != "0001" {
+		t.Fatalf("expected ticket 0001 for worker-2, got %#v", got)
+	}
+
+	if got := nextAssignedToWorker(tickets, "worker-2", map[string]bool{"0001": true}); got == nil || got.ID != "0002" {
+		t.Fatalf("expected ticket 0002 for worker-2 when 0001 is skipped, got %#v", got)
+	}
+}
+
+func TestNextUnassignedSkipsAssignedTickets(t *testing.T) {
+	tickets := []*ticket.Ticket{
+		{ID: "0001", Status: ticket.StatusTodo, AssignedTo: "worker-1"},
+		{ID: "0002", Status: ticket.StatusTodo, AssignedTo: ""},
+		{ID: "0003", Status: ticket.StatusTodo, AssignedTo: ""},
+	}
+
+	if got := nextUnassigned(tickets, map[string]bool{}); got == nil || got.ID != "0002" {
+		t.Fatalf("expected ticket 0002 as first unassigned todo, got %#v", got)
+	}
+	if got := nextUnassigned(tickets, map[string]bool{"0002": true}); got == nil || got.ID != "0003" {
+		t.Fatalf("expected ticket 0003 when 0002 is skipped, got %#v", got)
 	}
 }

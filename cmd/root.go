@@ -731,6 +731,7 @@ Your job:
 1) Maintain ` + "`.swarm/PM_TASK.md`" + ` as the source of truth for goals, scope, acceptance criteria, and open questions.
 2) Review and improve ` + "`.swarm/tickets/`" + `.
    - Create new tickets with ` + "`claude-swarm ticket add`" + `.
+   - To route work to a specific agent, set ` + "`assigned_to: worker-N`" + ` in ticket frontmatter (or run ` + "`claude-swarm ticket assign <id> worker-N`" + `).
    - Update existing ticket title/status/priority/assignee/description by editing ticket markdown files directly.
 3) At startup, read ` + "`README.md`" + `, ` + "`AGENTS.md`" + `, ` + "`.swarm/PM_KANBAN.md`" + `, and ` + "`.swarm/PM_FOCUS.md`" + ` for current context.
 4) Keep tasks aligned with product intent and sequencing.
@@ -1004,17 +1005,51 @@ func ticketFilePathByID(ticketsDir, id string) string {
 // and writes CURRENT_TICKET.md into each worktree.
 func assignTicketsToWorkers(cfg *config.Config, workers, worktreeDirs []string) {
 	store := ticket.NewStore(cfg.TicketsDir)
+	tickets, err := store.List()
+	if err != nil {
+		fmt.Printf("⚠️   Could not read tickets for assignment: %v\n", err)
+		return
+	}
 
 	// Track which IDs we've already handed out this round to avoid double-assign.
 	assigned := make(map[string]bool)
+	hasTicket := make(map[int]bool)
 
+	// Pass 1: honor PM-assigned tickets first.
 	for i, worker := range workers {
 		cliName, _ := parseWorker(worker)
 		if cliName == "spare" || cliName == "pm" {
 			continue
 		}
-		t, err := nextUnassigned(store, assigned)
-		if err != nil || t == nil {
+		workerName := fmt.Sprintf("worker-%d", i+1)
+		t := nextAssignedToWorker(tickets, workerName, assigned)
+		if t == nil {
+			continue
+		}
+		assigned[t.ID] = true
+		hasTicket[i] = true
+		if err := store.Assign(t.ID, workerName); err != nil {
+			fmt.Printf("⚠️   Could not assign ticket %s to %s: %v\n", t.ID, workerName, err)
+			continue
+		}
+		if err := ticket.WriteCurrentTicket(worktreeDirs[i], t); err != nil {
+			fmt.Printf("⚠️   Could not write ticket %s to %s: %v\n", t.ID, worktreeDirs[i], err)
+			continue
+		}
+		fmt.Printf("🎯  Preassigned ticket %s → %s: %s\n", t.ID, workerName, t.Title)
+	}
+
+	// Pass 2: fill remaining workers with unassigned todo tickets.
+	for i, worker := range workers {
+		cliName, _ := parseWorker(worker)
+		if cliName == "spare" || cliName == "pm" {
+			continue
+		}
+		if hasTicket[i] {
+			continue
+		}
+		t := nextUnassigned(tickets, assigned)
+		if t == nil {
 			break
 		}
 		workerName := fmt.Sprintf("worker-%d", i+1)
@@ -1031,18 +1066,31 @@ func assignTicketsToWorkers(cfg *config.Config, workers, worktreeDirs []string) 
 	}
 }
 
-// nextUnassigned returns the next todo ticket whose ID is not in the skip set.
-func nextUnassigned(store *ticket.Store, skip map[string]bool) (*ticket.Ticket, error) {
-	tickets, err := store.List()
-	if err != nil {
-		return nil, err
-	}
+// nextAssignedToWorker returns the highest-priority ticket assigned to workerName
+// and not already selected in skip. It accepts both todo and in-progress tickets.
+func nextAssignedToWorker(tickets []*ticket.Ticket, workerName string, skip map[string]bool) *ticket.Ticket {
 	for _, t := range tickets {
-		if t.Status == ticket.StatusTodo && !skip[t.ID] {
-			return t, nil
+		if skip[t.ID] {
+			continue
+		}
+		if t.AssignedTo != workerName {
+			continue
+		}
+		if t.Status == ticket.StatusTodo || t.Status == ticket.StatusInProgress {
+			return t
 		}
 	}
-	return nil, nil
+	return nil
+}
+
+// nextUnassigned returns the next todo ticket with no existing assignee whose ID is not in skip.
+func nextUnassigned(tickets []*ticket.Ticket, skip map[string]bool) *ticket.Ticket {
+	for _, t := range tickets {
+		if t.Status == ticket.StatusTodo && t.AssignedTo == "" && !skip[t.ID] {
+			return t
+		}
+	}
+	return nil
 }
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────
