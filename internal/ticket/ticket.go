@@ -89,6 +89,11 @@ func (s *Store) write(t *Ticket) error {
 	return os.WriteFile(s.fileName(t.ID, t.Title), []byte(content), 0o644)
 }
 
+// ParseFile reads and parses a ticket markdown file with YAML frontmatter.
+func ParseFile(path string) (*Ticket, error) {
+	return parseFile(path)
+}
+
 // parseFile reads and parses a ticket markdown file with YAML frontmatter.
 func parseFile(path string) (*Ticket, error) {
 	data, err := os.ReadFile(path)
