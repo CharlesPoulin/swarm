@@ -86,15 +86,19 @@ func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
 
 	repoRoot := "/tmp/repo"
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
-	swarmDir := filepath.Join(repoRoot, ".swarm")
 	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
 	cmd := pmTicketsWorkbenchCmd(repoRoot)
 
 	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && nvim '"+kanbanPath+"'") {
 		t.Fatalf("expected nvim tickets workspace command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "+Lexplore "+swarmDir) || !strings.Contains(cmd, "+wincmd l") {
-		t.Fatalf("expected nvim explorer+kanban layout commands, got %q", cmd)
+	if !strings.Contains(cmd, "'+Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "'+wincmd l'") {
+		t.Fatalf("expected nvim ticket tree layout commands, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "'+set mouse=a'") ||
+		!strings.Contains(cmd, "'+let g:netrw_liststyle=3'") ||
+		!strings.Contains(cmd, "'+let g:netrw_browse_split=4'") {
+		t.Fatalf("expected nvim interaction settings, got %q", cmd)
 	}
 }
 
@@ -103,15 +107,19 @@ func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
 
 	repoRoot := "/tmp/repo"
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
-	swarmDir := filepath.Join(repoRoot, ".swarm")
 	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
 	cmd := pmTicketsWorkbenchCmd(repoRoot)
 
 	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && vim '"+kanbanPath+"'") {
 		t.Fatalf("expected vim fallback command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "+Lexplore "+swarmDir) || !strings.Contains(cmd, "+wincmd l") {
-		t.Fatalf("expected vim explorer+kanban layout commands, got %q", cmd)
+	if !strings.Contains(cmd, "'+Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "'+wincmd l'") {
+		t.Fatalf("expected vim ticket tree layout commands, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "'+set mouse=a'") ||
+		!strings.Contains(cmd, "'+let g:netrw_liststyle=3'") ||
+		!strings.Contains(cmd, "'+let g:netrw_browse_split=4'") {
+		t.Fatalf("expected vim interaction settings, got %q", cmd)
 	}
 	if strings.Contains(cmd, "nvim") {
 		t.Fatalf("expected no nvim in vim fallback, got %q", cmd)

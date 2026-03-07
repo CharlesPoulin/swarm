@@ -523,24 +523,6 @@ func hubEditorCmd() string {
 	return "echo 'nvim/code not found; editor pane is shell.' && exec bash"
 }
 
-func pmTicketsWorkbenchCmd(repoRoot string) string {
-	swarmDir := filepath.Join(repoRoot, ".swarm")
-	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
-	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
-	if commandExists("nvim") {
-		return fmt.Sprintf("[ -d '%s' ] || mkdir -p '%s' && nvim '%s' '+Lexplore %s' '+wincmd l'",
-			ticketsDir, ticketsDir, kanbanPath, swarmDir)
-	}
-	if commandExists("vim") {
-		return fmt.Sprintf("[ -d '%s' ] || mkdir -p '%s' && vim '%s' '+Lexplore %s' '+wincmd l'",
-			ticketsDir, ticketsDir, kanbanPath, swarmDir)
-	}
-	if commandExists("nano") {
-		return fmt.Sprintf("[ -d '%s' ] || mkdir -p '%s' && nano '%s'", ticketsDir, ticketsDir, kanbanPath)
-	}
-	return fmt.Sprintf("mkdir -p '%s' && ls -la '%s' && echo 'Edit ticket files under %s manually.' && exec bash", ticketsDir, ticketsDir, ticketsDir)
-}
-
 func hubRightPaneCmd(cfg *config.Config) string {
 	mode := strings.ToLower(strings.TrimSpace(cfg.HubMode))
 	if mode == "git" {
