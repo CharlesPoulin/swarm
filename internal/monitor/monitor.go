@@ -4,16 +4,36 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/cpoulin/claude-swarm/internal/config"
+	"github.com/cpoulin/claude-swarm/internal/ticket"
 	"github.com/cpoulin/claude-swarm/internal/tmux"
 	"github.com/cpoulin/claude-swarm/internal/usagelimit"
 )
 
+var shellPromptRe = regexp.MustCompile(`(?m)[\$>]\s*$`)
+
+// looksLikeShellPrompt returns true when the last non-empty line of content
+// ends with a shell prompt indicator ($ or >).
+func looksLikeShellPrompt(content string) bool {
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return shellPromptRe.MatchString(line)
+		}
+	}
+	return false
+}
+
 // Watch polls a pane for API usage-limit errors and automatically resumes.
+// In sequential mode it also detects shell prompts (agent exited) and assigns
+// the next ticket from the backlog.
 // paneID is the stable %N tmux pane identifier.
-func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, cliCmd string, w io.Writer) {
+func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, cliCmd, worktreeDir string, w io.Writer) {
 	interval := time.Duration(cfg.MonitorInterval) * time.Second
 
 	logf := func(format string, args ...any) {
@@ -62,6 +82,20 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 			logf("[worker-%d] Resuming with %s --continue.", workerNum, cliCmd)
 			_ = tmux.SendKeys(paneID, cliCmd+" --continue")
 			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", workerNum))
+			continue
+		}
+
+		if cfg.AssignmentMode == "sequential" && looksLikeShellPrompt(content) {
+			store := ticket.NewStore(cfg.TicketsDir)
+			t, nextErr := store.NextTodo()
+			if nextErr == nil && t != nil {
+				worker := fmt.Sprintf("worker-%d", workerNum)
+				_ = store.Assign(t.ID, worker)
+				if writeErr := ticket.WriteCurrentTicket(worktreeDir, t); writeErr == nil {
+					logf("[worker-%d] Assigning next ticket %s: %s", workerNum, t.ID, t.Title)
+					_ = tmux.SendKeys(paneID, cliCmd+fmt.Sprintf(` --message "$(cat '%s/CURRENT_TICKET.md')"`, worktreeDir))
+				}
+			}
 		}
 	}
 }

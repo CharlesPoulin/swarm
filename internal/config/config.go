@@ -16,6 +16,8 @@ type Config struct {
 	WorktreePrefix    string `mapstructure:"worktree_prefix"`
 	HubMode           string `mapstructure:"hub_mode"`
 	ReviewRefreshSecs int    `mapstructure:"review_refresh_secs"`
+	AssignmentMode    string `mapstructure:"assignment_mode"` // parallel|sequential|manual
+	TicketsDir        string `mapstructure:"tickets_dir"`     // default: .swarm/tickets
 }
 
 // SetDefaults registers viper defaults.
@@ -31,6 +33,8 @@ func SetDefaults() {
 	viper.SetDefault("worktree_prefix", ".wt")
 	viper.SetDefault("hub_mode", "review")
 	viper.SetDefault("review_refresh_secs", 30)
+	viper.SetDefault("assignment_mode", "parallel")
+	viper.SetDefault("tickets_dir", ".swarm/tickets")
 }
 
 // Load unmarshals viper settings into a Config.
