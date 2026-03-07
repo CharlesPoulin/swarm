@@ -66,8 +66,12 @@ func pmVimExCommands(paths pmWorkbenchPaths) []string {
 		"let g:netrw_browse_split=4",
 		fmt.Sprintf("let g:netrw_winsize=%d", pmNetrwTreeWidth),
 		"belowright split " + paths.focusPath,
+		"let g:netrw_chgwin=winnr()",
 		"Lexplore " + paths.ticketsDir,
 		"wincmd l",
+		"nnoremap <silent> <leader>pt :wincmd h<CR>",
+		"nnoremap <silent> <leader>pe :wincmd l<CR>",
+		"nnoremap <silent> <leader>pk :wincmd k<CR>",
 	}
 }
 

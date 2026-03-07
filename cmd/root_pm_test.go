@@ -102,8 +102,14 @@ func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
 	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") {
+		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_chgwin=winnr()'") {
 		t.Fatalf("expected nvim interaction settings, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pt :wincmd h<CR>'") ||
+		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pe :wincmd l<CR>'") ||
+		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pk :wincmd k<CR>'") {
+		t.Fatalf("expected nvim workbench navigation mappings, got %q", cmd)
 	}
 }
 
@@ -128,8 +134,14 @@ func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
 	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") {
+		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_chgwin=winnr()'") {
 		t.Fatalf("expected vim interaction settings, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pt :wincmd h<CR>'") ||
+		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pe :wincmd l<CR>'") ||
+		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pk :wincmd k<CR>'") {
+		t.Fatalf("expected vim workbench navigation mappings, got %q", cmd)
 	}
 	if strings.Contains(cmd, "nvim") {
 		t.Fatalf("expected no nvim in vim fallback, got %q", cmd)
