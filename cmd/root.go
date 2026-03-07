@@ -250,6 +250,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 		"#[bg=colour33,fg=colour15,bold] 🤖 SWARM (%s) #[bg=colour235] ", cliLabel)
 	statusRight := fmt.Sprintf(
 		"#[bg=colour235,fg=colour245] %d agents  "+
+			"#[fg=colour33]v%s#[fg=colour245]  "+
 			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
 			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
 			"#[fg=colour39]Alt+3#[fg=colour245]:usage  "+
@@ -257,7 +258,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
 			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit  "+
-			"#[fg=colour33]%s#[fg=colour245] @ #[fg=colour39]%s",
+			"#[fg=colour39]%s",
 		len(workers), Version, Repo)
 
 	statusOpts := [][2]string{
