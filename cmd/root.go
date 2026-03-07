@@ -322,6 +322,9 @@ func bindKeybindings(cfg *config.Config, hubPaneID, lazygitPaneID string) {
 	_ = tmux.BindKey(cfg.Session, "-n", "M-2",
 		fmt.Sprintf("select-window -t '%s:hub'", cfg.Session))
 
+	// Ctrl+b v → nvim basics quick reference
+	_ = tmux.BindKey(cfg.Session, "", "v", nvimBasicsPopupCommand())
+
 	// Ctrl+b S → confirm then ship: open PR + cleanup for current worktree
 	_ = tmux.BindKey(cfg.Session, "", "S",
 		"confirm-before -p \"Ship this worktree as a PR? (y/n)\" "+
@@ -340,6 +343,10 @@ func bindKeybindings(cfg *config.Config, hubPaneID, lazygitPaneID string) {
 			fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
 				cfg.Session, lazygitPaneID))
 	}
+}
+
+func nvimBasicsPopupCommand() string {
+	return `display-popup -E "sh -lc 'printf \"%s\n\" \"NVIM BASICS (normal usage)\" \"\" \"Modes\" \"  i        insert mode\" \"  Esc      normal mode\" \"  :        command mode\" \"\" \"Movement\" \"  h j k l  left/down/up/right\" \"  w / b    next/previous word\" \"  0 / $    line start/end\" \"  gg / G   file top/bottom\" \"\" \"Editing\" \"  x        delete char\" \"  dd       delete line\" \"  yy       yank (copy) line\" \"  p        paste\" \"  u        undo\" \"  Ctrl+r   redo\" \"\" \"Search\" \"  /text    search forward\" \"  n / N    next/prev match\" \"\" \"Files\" \"  :w       save\" \"  :q       quit\" \"  :wq      save + quit\" \"  :q!      quit without save\" \"\" \"Press Enter to close...\"; read _'"` + ` || new-window -n nvim-help "sh -lc 'printf \"%s\n\" \"NVIM BASICS (normal usage)\" \"\" \"Modes\" \"  i        insert mode\" \"  Esc      normal mode\" \"  :        command mode\" \"\" \"Movement\" \"  h j k l  left/down/up/right\" \"  w / b    next/previous word\" \"  0 / $    line start/end\" \"  gg / G   file top/bottom\" \"\" \"Editing\" \"  x        delete char\" \"  dd       delete line\" \"  yy       yank (copy) line\" \"  p        paste\" \"  u        undo\" \"  Ctrl+r   redo\" \"\" \"Search\" \"  /text    search forward\" \"  n / N    next/prev match\" \"\" \"Files\" \"  :w       save\" \"  :q       quit\" \"  :wq      save + quit\" \"  :q!      quit without save\" \"\" \"Press Enter to close...\"; read _'"` + `"`
 }
 
 // runAndMonitor attaches the tmux session, starts worker monitors, and handles post-detach cleanup.
