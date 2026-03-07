@@ -18,10 +18,10 @@ type Config struct {
 
 // SetDefaults registers viper defaults.
 func SetDefaults() {
-	viper.SetDefault("num", 4)
+	viper.SetDefault("num", 6)
 	viper.SetDefault("session", "claude-swarm")
 	viper.SetDefault("base_branch", "")
-	viper.SetDefault("cli_type", "claude,claude,gemini:gemini-3-flash,gemini:gemini-3.1-pro")
+	viper.SetDefault("cli_type", "codex,codex,claude,gemini:gemini-3-flash,gemini:gemini-3.1-pro,spare")
 	viper.SetDefault("cli_flags", "")
 	viper.SetDefault("add_mode", false)
 	viper.SetDefault("resume_buffer_secs", 120)
