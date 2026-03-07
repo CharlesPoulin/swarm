@@ -811,14 +811,18 @@ func writePMBoard(repoRoot, taskPath, ticketsDir string) error {
 	writePMSection(&b, "In Progress", inProgress)
 	writePMSection(&b, "Blocked", blocked)
 	writePMSection(&b, "Done", done)
-	if err := os.WriteFile(filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md"), []byte(b.String()), 0o644); err != nil {
+	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
+	if err := os.WriteFile(kanbanPath, []byte(b.String()), 0o644); err != nil {
 		return err
 	}
 
 	focus := pickPMFocusTicket(todo, inProgress, blocked, done)
 	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	if focus == nil {
-		return os.WriteFile(focusPath, []byte(pmFocusEmpty), 0o644)
+		if err := os.WriteFile(focusPath, []byte(pmFocusEmpty), 0o644); err != nil {
+			return err
+		}
+		return writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath)
 	}
 	front := fmt.Sprintf("# Focus Ticket\n\n## [%s] %s\n\nStatus: `%s`  Priority: `%d`\n\n",
 		focus.ID, focus.Title, focus.Status, focus.Priority)
@@ -830,7 +834,41 @@ func writePMBoard(repoRoot, taskPath, ticketsDir string) error {
 	if p := ticketFilePathByID(ticketsDir, focus.ID); p != "" {
 		front += fmt.Sprintf("File: `%s`\n\n", p)
 	}
-	return os.WriteFile(focusPath, []byte(front+body+"\n"), 0o644)
+	if err := os.WriteFile(focusPath, []byte(front+body+"\n"), 0o644); err != nil {
+		return err
+	}
+	return writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath)
+}
+
+func writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath string) error {
+	task, _ := os.ReadFile(taskPath)
+	kanban, _ := os.ReadFile(kanbanPath)
+	focus, _ := os.ReadFile(focusPath)
+
+	content := strings.Join([]string{
+		"# PM Session Bootstrap",
+		"You are the PM for this repo. Use the context below as your working memory for this chat.",
+		"If context is stale, refresh by re-reading files under .swarm/ and .swarm/tickets/.",
+		"",
+		"## PM Instructions",
+		pmPrompt,
+		"",
+		"## PM Task",
+		string(task),
+		"",
+		"## PM Kanban",
+		string(kanban),
+		"",
+		"## PM Focus",
+		string(focus),
+		"",
+		"## First Actions",
+		"1) Summarize top priorities.",
+		"2) Identify unclear ticket(s) and propose concrete rewrites.",
+		"3) Propose next 1-3 tickets in execution order.",
+	}, "\n")
+
+	return os.WriteFile(filepath.Join(repoRoot, ".swarm", "PM_BOOTSTRAP.md"), []byte(content), 0o644)
 }
 
 func writePMSection(b *strings.Builder, title string, tickets []*ticket.Ticket) {
@@ -1159,7 +1197,8 @@ func cliCmdFor(cfg *config.Config, worker, worktreeDir, ticketFile string) strin
 	case "spare":
 		return "echo 'Spare pane ready.' && exec bash"
 	case "pm":
-		return "echo 'PM chat ready. Context files: .swarm/PM_TASK.md, .swarm/PM_KANBAN.md, .swarm/PM_FOCUS.md' && codex"
+		bootstrapPath := filepath.Join(worktreeDir, ".swarm", "PM_BOOTSTRAP.md")
+		return fmt.Sprintf(`echo 'PM chat ready. Bootstrapping with .swarm/PM_BOOTSTRAP.md' && codex "$(cat '%s')"`, bootstrapPath)
 	}
 	cmd := cliName
 	if model != "" {

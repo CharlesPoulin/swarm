@@ -76,7 +76,7 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 
 When `pm` is enabled, PM window has:
 - `tickets` pane: opens `.swarm/PM_KANBAN.md` plus `.swarm/PM_FOCUS.md` (bottom split), with ticket files under `.swarm/tickets/`
-- `worker-N (pm)` pane: Codex PM chat for creating/updating/refining tickets
+- `worker-N (pm)` pane: Codex PM chat, bootstrapped with injected context from `.swarm/PM_BOOTSTRAP.md`
 
 ## PR Review
 
