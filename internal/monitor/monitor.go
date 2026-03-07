@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/cpoulin/claude-swarm/internal/config"
@@ -15,6 +16,9 @@ import (
 // paneID is the stable %N tmux pane identifier.
 func Watch(ctx context.Context, cfg *config.Config, session, paneID string, workerNum int, cliCmd string, w io.Writer) {
 	interval := time.Duration(cfg.MonitorInterval) * time.Second
+	lastContent := ""
+	stallCount := 0
+	failureCount := 0
 
 	logf := func(format string, args ...any) {
 		msg := fmt.Sprintf(time.Now().UTC().Format("2006-01-02T15:04:05Z")+" "+format+"\n", args...)
@@ -35,7 +39,25 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 			return // pane gone
 		}
 
+		// Logic for detecting frustration/stalls
+		if content == lastContent && content != "" {
+			stallCount++
+		} else {
+			stallCount = 0
+		}
+		lastContent = content
+
+		// Simple check for common error markers in the last few lines
+		if isStruggling(content) {
+			failureCount++
+		} else {
+			if failureCount > 0 {
+				failureCount--
+			}
+		}
+
 		if usagelimit.HasError(content) {
+			// ... (existing usage limit logic)
 			waitSecs := usagelimit.ExtractWaitSecs(content)
 			totalSecs := waitSecs + cfg.ResumeBufferSec
 			displayH := totalSecs / 3600
@@ -43,7 +65,7 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 
 			logf("[worker-%d] API usage limit hit. Resuming in %dh %dm.", workerNum, displayH, displayM)
 
-			title := fmt.Sprintf("worker-%d [wait %dh%dm]", workerNum, displayH, displayM)
+			title := fmt.Sprintf("worker-%d ⏳ [wait %dh%dm]", workerNum, displayH, displayM)
 			_ = tmux.SetPaneTitle(paneID, title)
 
 			deadline := time.Now().Add(time.Duration(totalSecs) * time.Second)
@@ -61,7 +83,74 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 
 			logf("[worker-%d] Resuming with %s --continue.", workerNum, cliCmd)
 			_ = tmux.SendKeys(paneID, cliCmd+" --continue")
-			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d", workerNum))
+			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d ⚡", workerNum))
+		} else {
+			// Update status in title if not in wait state
+			status := extractStatus(content)
+			if failureCount >= 3 {
+				status = "🤯 struggling"
+			} else if stallCount >= 10 { // approx 5 mins if interval is 30s
+				status = "⏳ stalled"
+			}
+			_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d %s", workerNum, status))
 		}
 	}
+}
+
+func isStruggling(content string) bool {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	// Check last 5 lines for error markers
+	start := len(lines) - 5
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i < len(lines); i++ {
+		line := strings.ToLower(lines[i])
+		if strings.Contains(line, "failed") ||
+			strings.Contains(line, "error") ||
+			strings.Contains(line, "not found") ||
+			strings.Contains(line, "timed out") ||
+			strings.Contains(line, "try again") {
+			return true
+		}
+	}
+	return false
+}
+
+func extractStatus(content string) string {
+	// Simple heuristic to find what the agent is doing
+	// This can be refined based on specific CLI output patterns
+	if content == "" {
+		return "💤 idle"
+	}
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		// Look for activity markers
+		if strings.Contains(line, "Thinking") || strings.Contains(line, "thinking") {
+			return "🧠 thinking"
+		}
+		if strings.Contains(line, "Reading") || strings.Contains(line, "reading") {
+			return "📖 reading"
+		}
+		if strings.Contains(line, "Editing") || strings.Contains(line, "editing") {
+			return "📝 editing"
+		}
+		if strings.Contains(line, "Executing") || strings.Contains(line, "executing") {
+			return "⚙️ executing"
+		}
+		if strings.Contains(line, "Searching") || strings.Contains(line, "searching") {
+			return "🔍 searching"
+		}
+		if strings.Contains(line, "Done") || strings.Contains(line, "done") {
+			return "✅ done"
+		}
+	}
+	return "⚡ active"
 }

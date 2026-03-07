@@ -63,6 +63,43 @@ func init() {
 	_ = viper.BindPFlag("cli_type", f.Lookup("type"))
 	_ = viper.BindPFlag("cli_flags", f.Lookup("cli-flags"))
 	_ = viper.BindPFlag("add_mode", f.Lookup("add"))
+
+	rootCmd.AddCommand(swapCmd)
+}
+
+var swapCmd = &cobra.Command{
+	Use:   "swap <pane-id> <new-type>",
+	Short: "Swap an existing worker's model (e.g. swap %1 gemini)",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paneID := args[0]
+		newType := args[1]
+
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+
+		// Capture current working directory of the pane
+		out, err := exec.Command("tmux", "display-message", "-t", paneID, "-p", "#{pane_current_path}").Output()
+		if err != nil {
+			return fmt.Errorf("getting pane path: %w", err)
+		}
+		dir := strings.TrimSpace(string(out))
+
+		fmt.Printf("🔄 Swapping pane %s to %s in %s\n", paneID, newType, dir)
+
+		// Send /exit or similar to stop current process safely if it's responsive
+		_ = tmux.SendKeys(paneID, "/exit")
+		time.Sleep(1 * time.Second)
+
+		// Relaunch with new CLI
+		newCmd := cliCmdFor(cfg, newType, dir)
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s --continue", dir, newCmd))
+		_ = tmux.SetPaneTitle(paneID, paneTitle(0, newType)) // 0 as dummy index
+
+		return nil
+	},
 }
 
 func initConfig() {
