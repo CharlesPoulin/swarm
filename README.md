@@ -56,6 +56,7 @@ monitor_interval: 30       # how often to check for usage-limit errors (secs)
 | `Alt+1–9` | Worker windows |
 | `Ctrl+b e` | Jump to editor (nvim) |
 | `Ctrl+b g` | Jump to git (lazygit) |
+| `Ctrl+b v` | Show nvim basics (quick help) |
 | `Ctrl+b +` | Add a new worker on the fly |
 | `Ctrl+b d` | Detach (stops monitors, prompts cleanup) |
 
