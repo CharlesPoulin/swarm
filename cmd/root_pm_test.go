@@ -92,12 +92,12 @@ func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
 	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && nvim '"+kanbanPath+"'") {
 		t.Fatalf("expected nvim tickets workspace command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "'+Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "'+wincmd l'") {
+	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
 		t.Fatalf("expected nvim ticket tree layout commands, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "'+set mouse=a'") ||
-		!strings.Contains(cmd, "'+let g:netrw_liststyle=3'") ||
-		!strings.Contains(cmd, "'+let g:netrw_browse_split=4'") {
+	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") {
 		t.Fatalf("expected nvim interaction settings, got %q", cmd)
 	}
 }
@@ -113,12 +113,12 @@ func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
 	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && vim '"+kanbanPath+"'") {
 		t.Fatalf("expected vim fallback command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "'+Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "'+wincmd l'") {
+	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
 		t.Fatalf("expected vim ticket tree layout commands, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "'+set mouse=a'") ||
-		!strings.Contains(cmd, "'+let g:netrw_liststyle=3'") ||
-		!strings.Contains(cmd, "'+let g:netrw_browse_split=4'") {
+	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") {
 		t.Fatalf("expected vim interaction settings, got %q", cmd)
 	}
 	if strings.Contains(cmd, "nvim") {

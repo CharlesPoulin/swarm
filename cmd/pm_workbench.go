@@ -36,15 +36,18 @@ func pmTicketsWorkbenchCmd(repoRoot string) string {
 
 func buildPMVimWorkbenchCmd(editor string, paths pmWorkbenchPaths) string {
 	exCommands := []string{
-		"+set mouse=a",
-		"+let g:netrw_banner=0",
-		"+let g:netrw_liststyle=3",
-		"+let g:netrw_browse_split=4",
-		"+Lexplore " + paths.ticketsDir,
-		"+wincmd l",
+		"set mouse=a",
+		"let g:netrw_banner=0",
+		"let g:netrw_liststyle=3",
+		"let g:netrw_browse_split=4",
+		"Lexplore " + paths.ticketsDir,
+		"wincmd l",
 	}
 
-	editorArgs := append([]string{shellQuote(paths.kanbanPath)}, shellQuoteAll(exCommands)...)
+	editorArgs := []string{shellQuote(paths.kanbanPath)}
+	for _, cmd := range exCommands {
+		editorArgs = append(editorArgs, "-c", shellQuote(cmd))
+	}
 	return joinWithAnd(
 		ensureDirectoryCmd(paths.ticketsDir),
 		fmt.Sprintf("%s %s", editor, strings.Join(editorArgs, " ")),
@@ -71,13 +74,6 @@ func ensureDirectoryCmd(dir string) string {
 	return fmt.Sprintf("[ -d %s ] || mkdir -p %s", shellQuote(dir), shellQuote(dir))
 }
 
-func shellQuoteAll(values []string) []string {
-	quoted := make([]string, 0, len(values))
-	for _, v := range values {
-		quoted = append(quoted, shellQuote(v))
-	}
-	return quoted
-}
 
 func joinWithAnd(parts ...string) string {
 	nonEmpty := make([]string, 0, len(parts))
