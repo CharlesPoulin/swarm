@@ -108,6 +108,11 @@ func SelectPane(target string) error {
 	return run("select-pane", "-t", target)
 }
 
+// SelectLayout applies a tmux layout preset to a window target.
+func SelectLayout(target, layout string) error {
+	return run("select-layout", "-t", target, layout)
+}
+
 // SplitWindowGetPaneID splits a pane and returns the new pane's stable %N ID.
 func SplitWindowGetPaneID(target, cwd string, percent int, horizontal bool) (string, error) {
 	args := []string{"split-window", "-t", target, "-P", "-F", "#{pane_id}"}
