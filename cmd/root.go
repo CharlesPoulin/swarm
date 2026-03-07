@@ -764,6 +764,14 @@ Create one with:
 claude-swarm ticket add --title "..." --desc "..."
 `
 
+func refreshPMArtifacts() error {
+	repoRoot, err := git.RepoRoot()
+	if err != nil {
+		return err
+	}
+	return writePMArtifacts(repoRoot)
+}
+
 // writePMArtifacts ensures PM prompt/task/board files and ticket directory exist under repoRoot/.swarm.
 func writePMArtifacts(repoRoot string) error {
 	dir := filepath.Join(repoRoot, ".swarm")
@@ -811,8 +819,9 @@ func writePMBoard(repoRoot, taskPath, ticketsDir string) error {
 
 	var b strings.Builder
 	b.WriteString("# PM Kanban\n\n")
-	b.WriteString("This file is auto-generated at swarm startup.\n")
-	b.WriteString("Edit ticket files in `.swarm/tickets/` for manual updates.\n")
+	b.WriteString("This file is auto-generated at swarm startup and by `claude-swarm ticket refresh`.\n")
+	b.WriteString("`.swarm/tickets/` is the source of truth.\n")
+	b.WriteString("CLI lifecycle commands refresh this file automatically; direct markdown edits require `claude-swarm ticket refresh`.\n")
 	b.WriteString("Planning doc: `.swarm/PM_TASK.md`.\n\n")
 	writePMSection(&b, "Todo", todo)
 	writePMSection(&b, "In Progress", inProgress)
@@ -857,6 +866,7 @@ func writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath string) error {
 		"# PM Session Bootstrap",
 		"You are the PM for this repo. Use the context below as your working memory for this chat.",
 		"If context is stale, refresh by re-reading files under .swarm/ and .swarm/tickets/.",
+		"After direct ticket markdown edits, run `claude-swarm ticket refresh` before trusting PM mirrors.",
 		"",
 		"## PM Instructions",
 		pmPrompt,

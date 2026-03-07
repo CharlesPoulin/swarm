@@ -58,6 +58,9 @@ var ticketAddCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := refreshPMArtifacts(); err != nil {
+			return err
+		}
 		fmt.Printf("Created ticket %s: %s\n", t.ID, t.Title)
 		return nil
 	},
@@ -112,6 +115,9 @@ var ticketDoneCmd = &cobra.Command{
 		if err := store.MarkDone(id); err != nil {
 			return err
 		}
+		if err := refreshPMArtifacts(); err != nil {
+			return err
+		}
 		fmt.Printf("Ticket %s marked as done.\n", id)
 		return nil
 	},
@@ -153,11 +159,17 @@ var ticketAssignCmd = &cobra.Command{
 		if _, statErr := os.Stat(worktreeDir); statErr != nil {
 			return fmt.Errorf("worktree %s not found — is a swarm running?", worktreeDir)
 		}
-
+		if err := store.Assign(id, workerName); err != nil {
+			return err
+		}
+		t, err = store.Get(id)
+		if err != nil {
+			return err
+		}
 		if err := ticket.WriteCurrentTicket(worktreeDir, t); err != nil {
 			return fmt.Errorf("writing ticket to worktree: %w", err)
 		}
-		if err := store.Assign(id, workerName); err != nil {
+		if err := refreshPMArtifacts(); err != nil {
 			return err
 		}
 
@@ -179,6 +191,18 @@ var ticketAssignCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Ticket %s assigned to %s (worktree updated; no live pane found).\n", id, workerName)
+		return nil
+	},
+}
+
+var ticketRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Regenerate PM Kanban and Focus from ticket markdown files",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := refreshPMArtifacts(); err != nil {
+			return err
+		}
+		fmt.Println("PM artifacts refreshed from .swarm/tickets.")
 		return nil
 	},
 }
@@ -208,7 +232,7 @@ func init() {
 	ticketAddCmd.Flags().String("title", "", "Ticket title")
 	ticketAddCmd.Flags().String("desc", "", "Ticket description")
 
-	ticketCmd.AddCommand(ticketAddCmd, ticketListCmd, ticketDoneCmd, ticketAssignCmd, ticketNextCmd)
+	ticketCmd.AddCommand(ticketAddCmd, ticketListCmd, ticketDoneCmd, ticketAssignCmd, ticketRefreshCmd, ticketNextCmd)
 	rootCmd.AddCommand(ticketCmd)
 }
 

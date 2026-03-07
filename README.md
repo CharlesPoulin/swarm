@@ -80,6 +80,24 @@ When `pm` is enabled, PM window has:
 - `worker-N (pm)` pane: Codex PM chat, bootstrapped from `.swarm/PM_PROMPT.md` by default (`pm_bootstrap_mode` controls this)
 - PM can pre-route tickets by setting `assigned_to: worker-N`; startup assignment now honors these first, then fills remaining workers from unassigned TODOs.
 
+## PM Mirror Refresh
+
+`.swarm/tickets/*.md` is the source of truth for ticket metadata. `.swarm/PM_KANBAN.md` and `.swarm/PM_FOCUS.md` are derived mirrors.
+
+`claude-swarm ticket add`, `claude-swarm ticket assign`, and `claude-swarm ticket done` refresh PM mirrors automatically after updating ticket metadata.
+
+If you edit ticket markdown directly, run:
+
+```bash
+claude-swarm ticket refresh
+```
+
+Drift-recovery workflow:
+1. Edit the authoritative ticket files under `.swarm/tickets/`.
+2. Before refresh, confirm drift if needed with `cat .swarm/PM_KANBAN.md` and `cat .swarm/PM_FOCUS.md`.
+3. Run `claude-swarm ticket refresh`.
+4. Validate recovery by checking that `PM_KANBAN` ordering is `status bucket -> priority asc -> ticket id asc` and that `PM_FOCUS` selects the first `in-progress`, then `todo`, then `blocked`, then `done` ticket.
+
 ## PR Review
 
 Open interactive PR review dashboard:
