@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -844,6 +845,7 @@ func writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath string) error {
 	task, _ := os.ReadFile(taskPath)
 	kanban, _ := os.ReadFile(kanbanPath)
 	focus, _ := os.ReadFile(focusPath)
+	overview := buildProjectOverview(repoRoot)
 
 	content := strings.Join([]string{
 		"# PM Session Bootstrap",
@@ -862,6 +864,9 @@ func writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath string) error {
 		"## PM Focus",
 		string(focus),
 		"",
+		"## Project Overview",
+		overview,
+		"",
 		"## First Actions",
 		"1) Summarize top priorities.",
 		"2) Identify unclear ticket(s) and propose concrete rewrites.",
@@ -869,6 +874,74 @@ func writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath string) error {
 	}, "\n")
 
 	return os.WriteFile(filepath.Join(repoRoot, ".swarm", "PM_BOOTSTRAP.md"), []byte(content), 0o644)
+}
+
+func buildProjectOverview(repoRoot string) string {
+	var out strings.Builder
+
+	branch := "-"
+	if b, err := git.CurrentBranch(); err == nil && strings.TrimSpace(b) != "" {
+		branch = strings.TrimSpace(b)
+	}
+	out.WriteString(fmt.Sprintf("Branch: `%s`\n", branch))
+
+	if rev, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--short", "HEAD").Output(); err == nil {
+		out.WriteString(fmt.Sprintf("Commit: `%s`\n", strings.TrimSpace(string(rev))))
+	}
+
+	out.WriteString("\nTop-level directories/files:\n")
+	if entries, err := os.ReadDir(repoRoot); err == nil {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			n := e.Name()
+			if strings.HasPrefix(n, ".git") || strings.HasPrefix(n, ".wt-") {
+				continue
+			}
+			if e.IsDir() {
+				n += "/"
+			}
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		limit := 18
+		if len(names) < limit {
+			limit = len(names)
+		}
+		for i := 0; i < limit; i++ {
+			out.WriteString("- `" + names[i] + "`\n")
+		}
+		if len(names) > limit {
+			out.WriteString(fmt.Sprintf("- ... (%d more)\n", len(names)-limit))
+		}
+	}
+
+	out.WriteString("\nREADME excerpt:\n")
+	out.WriteString(readFileExcerpt(filepath.Join(repoRoot, "README.md"), 30, 3500))
+
+	out.WriteString("\n\nCLAUDE excerpt:\n")
+	out.WriteString(readFileExcerpt(filepath.Join(repoRoot, "CLAUDE.md"), 35, 3500))
+
+	return out.String()
+}
+
+func readFileExcerpt(path string, maxLines, maxBytes int) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "_file not found_"
+	}
+	if maxBytes > 0 && len(b) > maxBytes {
+		b = b[:maxBytes]
+	}
+	s := string(b)
+	lines := strings.Split(s, "\n")
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+	}
+	s = strings.TrimSpace(strings.Join(lines, "\n"))
+	if s == "" {
+		return "_empty_"
+	}
+	return "```\n" + s + "\n```"
 }
 
 func writePMSection(b *strings.Builder, title string, tickets []*ticket.Ticket) {
