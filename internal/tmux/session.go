@@ -3,8 +3,16 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
+
+type PaneInfo struct {
+	ID             string
+	Index          int
+	Title          string
+	CurrentCommand string
+}
 
 func run(args ...string) error {
 	cmd := exec.Command("tmux", args...)
@@ -174,4 +182,34 @@ func MaxWindowIndex(session string) (int, error) {
 		}
 	}
 	return max, nil
+}
+
+// ListPanes returns pane metadata for a window target (e.g. "session:swarm").
+func ListPanes(target string) ([]PaneInfo, error) {
+	format := "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}"
+	out, err := exec.Command("tmux", "list-panes", "-t", target, "-F", format).Output()
+	if err != nil {
+		return nil, fmt.Errorf("tmux list-panes -t %s: %w", target, err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	panes := make([]PaneInfo, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 4)
+		if len(parts) < 4 {
+			continue
+		}
+		idx, _ := strconv.Atoi(parts[1])
+		panes = append(panes, PaneInfo{
+			ID:             strings.TrimSpace(parts[0]),
+			Index:          idx,
+			Title:          strings.TrimSpace(parts[2]),
+			CurrentCommand: strings.TrimSpace(parts[3]),
+		})
+	}
+	return panes, nil
 }
