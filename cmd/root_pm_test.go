@@ -99,6 +99,15 @@ func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
 	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
 		t.Fatalf("expected nvim ticket tree commands, got %q", cmd)
 	}
+	if !commandsAppearInOrder(
+		cmd,
+		"-c 'belowright split "+focusPath+"'",
+		"-c 'Lexplore "+ticketsDir+"'",
+		"-c 'wincmd l'",
+		"-c 'let g:netrw_chgwin=winnr()'",
+	) {
+		t.Fatalf("expected nvim layout commands in deterministic order, got %q", cmd)
+	}
 	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
@@ -130,6 +139,15 @@ func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
 		t.Fatalf("expected vim ticket tree commands, got %q", cmd)
+	}
+	if !commandsAppearInOrder(
+		cmd,
+		"-c 'belowright split "+focusPath+"'",
+		"-c 'Lexplore "+ticketsDir+"'",
+		"-c 'wincmd l'",
+		"-c 'let g:netrw_chgwin=winnr()'",
+	) {
+		t.Fatalf("expected vim layout commands in deterministic order, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
@@ -173,6 +191,18 @@ func makePathWithTools(t *testing.T, tools ...string) string {
 		}
 	}
 	return dir
+}
+
+func commandsAppearInOrder(cmd string, parts ...string) bool {
+	pos := 0
+	for _, part := range parts {
+		idx := strings.Index(cmd[pos:], part)
+		if idx < 0 {
+			return false
+		}
+		pos += idx + len(part)
+	}
+	return true
 }
 
 func TestNextAssignedToWorker(t *testing.T) {
