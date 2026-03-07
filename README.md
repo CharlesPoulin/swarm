@@ -21,7 +21,7 @@ claude-swarm
 ```
 
 That's it. You get:
-- Window `0` — hub: nvim on the left, lazygit on the right
+- Window `0` — hub: nvim on the left, PR review on the right (`gh` required; falls back to lazygit/git view)
 - Window `usage` — live per-agent usage/limit dashboard
 - Windows `1–N` — one Claude per worktree on a fresh branch
 
@@ -52,6 +52,8 @@ cli_flags: ""
 session: myswarm
 resume_buffer_secs: 120   # extra wait after usage-limit expires
 monitor_interval: 30       # how often to check for usage-limit errors (secs)
+hub_mode: review           # review (default) or git for the hub right pane
+review_refresh_secs: 30    # PR review auto-refresh cadence
 ```
 
 ## Keybindings (inside the session)
@@ -62,11 +64,23 @@ monitor_interval: 30       # how often to check for usage-limit errors (secs)
 | `Alt+1–9` | Worker windows |
 | `Alt+3` | Usage window |
 | `Ctrl+b e` | Jump to editor (nvim) |
-| `Ctrl+b g` | Jump to git (lazygit) |
+| `Ctrl+b g` | Jump to hub right pane (review/git) |
+| `Ctrl+b p` | Jump to PR review pane |
 | `Ctrl+b v` | Show nvim basics (quick help) |
 | `Ctrl+b R` | Reset current worktree to `origin/main` and send `/clear` |
 | `Ctrl+b +` | Add a new worker on the fly |
 | `Ctrl+b d` | Detach (stops monitors, prompts cleanup) |
+
+## PR Review
+
+Open interactive PR review dashboard:
+
+```bash
+claude-swarm review
+```
+
+You can see open PRs, CI status, mergeability, description, checks, and diff in one window.
+Press `a` to approve + squash-merge (warns if CI is not green, but still allows override).
 
 ## Edit / hack
 
