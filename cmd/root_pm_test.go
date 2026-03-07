@@ -87,17 +87,22 @@ func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
 	repoRoot := "/tmp/repo"
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
 	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
+	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	cmd := pmTicketsWorkbenchCmd(repoRoot)
 
 	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && nvim '"+kanbanPath+"'") {
 		t.Fatalf("expected nvim tickets workspace command, got %q", cmd)
 	}
+	if !strings.Contains(cmd, "-c 'belowright split "+focusPath+"'") {
+		t.Fatalf("expected nvim top/bottom split command, got %q", cmd)
+	}
 	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
-		t.Fatalf("expected nvim ticket tree layout commands, got %q", cmd)
+		t.Fatalf("expected nvim ticket tree commands, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") {
+		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") {
 		t.Fatalf("expected nvim interaction settings, got %q", cmd)
 	}
 }
@@ -108,17 +113,22 @@ func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
 	repoRoot := "/tmp/repo"
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
 	kanbanPath := filepath.Join(repoRoot, ".swarm", "PM_KANBAN.md")
+	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	cmd := pmTicketsWorkbenchCmd(repoRoot)
 
 	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && vim '"+kanbanPath+"'") {
 		t.Fatalf("expected vim fallback command, got %q", cmd)
 	}
+	if !strings.Contains(cmd, "-c 'belowright split "+focusPath+"'") {
+		t.Fatalf("expected vim top/bottom split command, got %q", cmd)
+	}
 	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
-		t.Fatalf("expected vim ticket tree layout commands, got %q", cmd)
+		t.Fatalf("expected vim ticket tree commands, got %q", cmd)
 	}
 	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
 		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") {
+		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
+		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") {
 		t.Fatalf("expected vim interaction settings, got %q", cmd)
 	}
 	if strings.Contains(cmd, "nvim") {
