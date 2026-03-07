@@ -190,6 +190,10 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
+	if err := setupUsageWindow(cfg); err != nil {
+		return err
+	}
+
 	bindKeybindings(cfg, nvimID, lgID)
 
 	return runAndMonitor(cfg, repoRoot, workers, worktreeDirs, paneIDs, w)
@@ -239,6 +243,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 		"#[bg=colour235,fg=colour245] %d agents  "+
 			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
 			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
+			"#[fg=colour39]Alt+3#[fg=colour245]:usage  "+
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
@@ -252,7 +257,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 		{"status-left", statusLeft},
 		{"status-left-length", "30"},
 		{"status-right", statusRight},
-		{"status-right-length", "140"},
+		{"status-right-length", "160"},
 		{"window-status-format", "#[fg=colour245] #I:#W "},
 		{"window-status-current-format", "#[bg=colour33,fg=colour15,bold] #I:#W "},
 		{"pane-border-style", "fg=colour238"},
@@ -263,6 +268,17 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 	for _, opt := range statusOpts {
 		_ = tmux.SetOption(cfg.Session, opt[0], opt[1])
 	}
+}
+
+func setupUsageWindow(cfg *config.Config) error {
+	if err := tmux.NewWindowNoIndex(cfg.Session, ".", "usage"); err != nil {
+		return fmt.Errorf("creating usage window: %w", err)
+	}
+	refreshSecs := cfg.MonitorInterval
+	if refreshSecs <= 0 {
+		refreshSecs = 30
+	}
+	return tmux.SendKeys(fmt.Sprintf("%s:usage", cfg.Session), usageWindowCommand(cfg.Session, refreshSecs))
 }
 
 // setupSwarmWindow creates worker panes in the "swarm" window and launches each AI CLI.
@@ -376,6 +392,8 @@ func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
 		fmt.Sprintf("select-window -t '%s:swarm'", cfg.Session))
 	_ = tmux.BindKey(cfg.Session, "-n", "M-2",
 		fmt.Sprintf("select-window -t '%s:hub'", cfg.Session))
+	_ = tmux.BindKey(cfg.Session, "-n", "M-3",
+		fmt.Sprintf("select-window -t '%s:usage'", cfg.Session))
 
 	// Ctrl+b v → nvim basics quick reference
 	_ = tmux.BindKey(cfg.Session, "", "v", nvimBasicsPopupCommand())
@@ -414,7 +432,7 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, p
 	fmt.Printf("✅  All %d instances launched!\n", len(workers))
 	fmt.Printf("🔍  Monitors active (log: /tmp/claude-swarm-%s.log)\n", cfg.Session)
 	fmt.Printf("📎  Attaching to session %q…\n", cfg.Session)
-	fmt.Println("    Detach: Ctrl+b d  |  Hub: Alt+2  |  Agents: Alt+1")
+	fmt.Println("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Agents: Alt+1")
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
