@@ -2,6 +2,7 @@
 # Binaries
 claude-swarm
 claude-swarm.exe
+bin/
 
 # GoReleaser artifacts
 dist/

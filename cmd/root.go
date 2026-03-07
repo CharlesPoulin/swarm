@@ -139,7 +139,9 @@ func orchestrate(cfg *config.Config) error {
 	logPath := fmt.Sprintf("/tmp/claude-swarm-%s.log", cfg.Session)
 	logFile, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if logFile != nil {
-		defer logFile.Close()
+		defer func() {
+			_ = logFile.Close()
+		}()
 	}
 
 	fmt.Printf("🌳  Repo    : %s\n", repoRoot)
@@ -192,7 +194,7 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 
 	bindKeybindings(cfg, nvimID, lgID)
 
-	return runAndMonitor(cfg, repoRoot, workers, worktreeDirs, paneIDs, w)
+	return runAndMonitor(cfg, workers, worktreeDirs, paneIDs, w)
 }
 
 // createWorktrees creates git worktrees for all workers and returns their dirs.
@@ -408,7 +410,7 @@ func nvimBasicsPopupCommand() string {
 }
 
 // runAndMonitor attaches the tmux session, starts worker monitors, and handles post-detach cleanup.
-func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, paneIDs []string, w io.Writer) error {
+func runAndMonitor(cfg *config.Config, workers, worktreeDirs, paneIDs []string, w io.Writer) error {
 	_ = tmux.SelectWindow(fmt.Sprintf("%s:swarm", cfg.Session))
 
 	fmt.Printf("✅  All %d instances launched!\n", len(workers))
@@ -437,7 +439,8 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, p
 	fmt.Println("\n🔴  Stopping monitors…")
 	cancel()
 
-	return postDetachCleanup(cfg, repoRoot, worktreeDirs)
+	postDetachCleanup(worktreeDirs)
+	return nil
 }
 
 // ── Add-mode ──────────────────────────────────────────────────────────────────
@@ -488,7 +491,7 @@ func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
-func postDetachCleanup(cfg *config.Config, repoRoot string, worktreeDirs []string) error {
+func postDetachCleanup(worktreeDirs []string) {
 	fmt.Print("\n🧹  Remove worktrees and swarm branches? [Y/n] ")
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
@@ -509,8 +512,6 @@ func postDetachCleanup(cfg *config.Config, repoRoot string, worktreeDirs []strin
 	} else {
 		fmt.Println("ℹ️   Worktrees kept. Remove manually with: git worktree remove <path>")
 	}
-	_ = repoRoot
-	return nil
 }
 
 func commandExists(name string) bool {

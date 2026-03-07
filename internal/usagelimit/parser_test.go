@@ -49,7 +49,7 @@ func TestExtractWaitSecs_RelativeDuration(t *testing.T) {
 		{"in 1 hours 30 minutes", 5400, 5400},
 		{"in 2 hours", 7200, 7200},
 		{"in 0 hours 45 minutes", 3600, 3600}, // 0 hours → fallback (no hours match)
-		{"no duration here", 3600, 3600},       // default fallback
+		{"no duration here", 3600, 3600},      // default fallback
 		{"rate limit exceeded, retry in 30 seconds", 30, 30},
 		{"retry in 1m30s", 90, 90},
 	}
