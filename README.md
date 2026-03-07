@@ -24,6 +24,11 @@ That's it. You get:
 - Window `0` — hub: nvim on the left, lazygit on the right
 - Windows `1–N` — one Claude per worktree on a fresh branch
 
+After merging a PR from a worker, reset that worktree back to `main` state:
+```bash
+claude-swarm reset
+```
+
 ## Flags
 
 | Flag | Default | Description |
@@ -57,6 +62,7 @@ monitor_interval: 30       # how often to check for usage-limit errors (secs)
 | `Ctrl+b e` | Jump to editor (nvim) |
 | `Ctrl+b g` | Jump to git (lazygit) |
 | `Ctrl+b v` | Show nvim basics (quick help) |
+| `Ctrl+b R` | Reset current worktree to `origin/main` and send `/clear` |
 | `Ctrl+b +` | Add a new worker on the fly |
 | `Ctrl+b d` | Detach (stops monitors, prompts cleanup) |
 
