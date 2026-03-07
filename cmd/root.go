@@ -46,6 +46,14 @@ func Execute() {
 	}
 }
 
+// ExecuteWithArgs is used for testing the command output.
+func ExecuteWithArgs(args []string, out, err io.Writer) error {
+	rootCmd.SetArgs(args)
+	rootCmd.SetOut(out)
+	rootCmd.SetErr(err)
+	return rootCmd.Execute()
+}
+
 func init() {
 	cobra.OnInitialize(initConfig)
 
