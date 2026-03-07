@@ -65,6 +65,7 @@ func init() {
 	f.StringP("base-branch", "b", "", "Base branch for worktrees (default: current branch)")
 	f.StringP("type", "t", "", "AI CLI(s) to use: claude|gemini|codex|pm|spare (comma list; pm opens its own tab)")
 	f.String("cli-flags", "", "Extra flags passed to each AI CLI command")
+	f.String("pm-bootstrap", "prompt", "PM startup bootstrap mode: prompt|full|none")
 	f.BoolP("add", "a", false, "Add workers to an existing session instead of restarting")
 	f.String("assign-mode", "", "Ticket assignment mode: parallel|sequential|manual")
 
@@ -73,6 +74,7 @@ func init() {
 	_ = viper.BindPFlag("base_branch", f.Lookup("base-branch"))
 	_ = viper.BindPFlag("cli_type", f.Lookup("type"))
 	_ = viper.BindPFlag("cli_flags", f.Lookup("cli-flags"))
+	_ = viper.BindPFlag("pm_bootstrap_mode", f.Lookup("pm-bootstrap"))
 	_ = viper.BindPFlag("add_mode", f.Lookup("add"))
 	_ = viper.BindPFlag("assignment_mode", f.Lookup("assign-mode"))
 
@@ -529,7 +531,7 @@ func pmTicketsWorkbenchCmd(repoRoot string) string {
 	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	ticketsDir := filepath.Join(repoRoot, ".swarm", "tickets")
 	if commandExists("nvim") {
-		return fmt.Sprintf("mkdir -p '%s' && nvim '%s' '+Lexplore %s' '+botright 14split %s'", ticketsDir, kanbanPath, ticketsDir, focusPath)
+		return fmt.Sprintf("mkdir -p '%s' && nvim '%s' '+botright 14split %s'", ticketsDir, kanbanPath, focusPath)
 	}
 	if commandExists("vim") {
 		return fmt.Sprintf("mkdir -p '%s' && vim '%s' '+botright 14split %s'", ticketsDir, kanbanPath, focusPath)
@@ -730,7 +732,8 @@ Your job:
 2) Review and improve ` + "`.swarm/tickets/`" + `.
    - Create new tickets with ` + "`claude-swarm ticket add`" + `.
    - Update existing ticket title/status/priority/assignee/description by editing ticket markdown files directly.
-3) Keep tasks aligned with product intent and sequencing.
+3) At startup, read ` + "`README.md`" + `, ` + "`AGENTS.md`" + `, ` + "`.swarm/PM_KANBAN.md`" + `, and ` + "`.swarm/PM_FOCUS.md`" + ` for current context.
+4) Keep tasks aligned with product intent and sequencing.
 
 Do NOT write product code. Focus on clear, executable tickets and scope clarity.`
 
@@ -1265,8 +1268,17 @@ func cliCmdFor(cfg *config.Config, worker, worktreeDir, ticketFile string) strin
 	case "spare":
 		return "echo 'Spare pane ready.' && exec bash"
 	case "pm":
+		mode := normalizePMBootstrapMode(cfg.PMBootstrapMode)
 		bootstrapPath := filepath.Join(worktreeDir, ".swarm", "PM_BOOTSTRAP.md")
-		return fmt.Sprintf(`echo 'PM chat ready. Bootstrapping with .swarm/PM_BOOTSTRAP.md' && codex "$(cat '%s')"`, bootstrapPath)
+		promptPath := filepath.Join(worktreeDir, ".swarm", "PM_PROMPT.md")
+		switch mode {
+		case "full":
+			return fmt.Sprintf(`echo 'PM chat ready. Bootstrapping with .swarm/PM_BOOTSTRAP.md' && codex "$(cat '%s')"`, bootstrapPath)
+		case "none":
+			return "echo 'PM chat ready. Starting without bootstrap context.' && codex"
+		default: // prompt
+			return fmt.Sprintf(`echo 'PM chat ready. Bootstrapping with .swarm/PM_PROMPT.md' && codex "$(cat '%s')"`, promptPath)
+		}
 	}
 	cmd := cliName
 	if model != "" {
@@ -1297,4 +1309,15 @@ func geminiCLIHomeForWorktree(worktreeDir string) string {
 		return ""
 	}
 	return filepath.Join(os.Getenv("HOME"), ".gemini-"+strings.TrimPrefix(base, "."))
+}
+
+func normalizePMBootstrapMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "full":
+		return "full"
+	case "none":
+		return "none"
+	default:
+		return "prompt"
+	}
 }

@@ -51,6 +51,7 @@ Put defaults in `~/.claude-swarm.yaml` so you don't have to retype flags:
 num: 3
 cli_type: codex,codex,claude,gemini:gemini-3-flash-preview,gemini:gemini-3-flash-preview,spare,pm
 cli_flags: ""
+pm_bootstrap_mode: prompt    # prompt (default), full, or none
 session: myswarm
 resume_buffer_secs: 120   # extra wait after usage-limit expires
 monitor_interval: 30       # how often to check for usage-limit errors (secs)
@@ -76,7 +77,7 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 
 When `pm` is enabled, PM window has:
 - `tickets` pane: opens `.swarm/PM_KANBAN.md` plus `.swarm/PM_FOCUS.md` (bottom split), with ticket files under `.swarm/tickets/`
-- `worker-N (pm)` pane: Codex PM chat, bootstrapped with injected context from `.swarm/PM_BOOTSTRAP.md`
+- `worker-N (pm)` pane: Codex PM chat, bootstrapped from `.swarm/PM_PROMPT.md` by default (`pm_bootstrap_mode` controls this)
 
 ## PR Review
 
