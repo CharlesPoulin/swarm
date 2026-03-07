@@ -90,34 +90,37 @@ func TestPMTicketsWorkbenchCmd_NvimLayout(t *testing.T) {
 	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	cmd := pmTicketsWorkbenchCmd(repoRoot)
 
-	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && nvim '"+kanbanPath+"'") {
+	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && nvim -n '"+kanbanPath+"'") {
 		t.Fatalf("expected nvim tickets workspace command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'belowright split "+focusPath+"'") {
+	if strings.Count(cmd, " -c ") != 1 {
+		t.Fatalf("expected single -c command to avoid vim command count limits, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "belowright split ") || !strings.Contains(cmd, focusPath) {
 		t.Fatalf("expected nvim top/bottom split command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
+	if !strings.Contains(cmd, "Lexplore ") || !strings.Contains(cmd, ticketsDir) || !strings.Contains(cmd, "wincmd l") {
 		t.Fatalf("expected nvim ticket tree commands, got %q", cmd)
 	}
 	if !commandsAppearInOrder(
 		cmd,
-		"-c 'belowright split "+focusPath+"'",
-		"-c 'Lexplore "+ticketsDir+"'",
-		"-c 'wincmd l'",
-		"-c 'let g:netrw_chgwin=winnr()'",
+		"belowright split ",
+		"Lexplore ",
+		"wincmd l",
+		"let g:netrw_chgwin=winnr()",
 	) {
 		t.Fatalf("expected nvim layout commands in deterministic order, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_chgwin=winnr()'") {
+	if !strings.Contains(cmd, "set mouse=a") ||
+		!strings.Contains(cmd, "let g:netrw_liststyle=3") ||
+		!strings.Contains(cmd, "let g:netrw_browse_split=4") ||
+		!strings.Contains(cmd, "let g:netrw_winsize=30") ||
+		!strings.Contains(cmd, "let g:netrw_chgwin=winnr()") {
 		t.Fatalf("expected nvim interaction settings, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pt :wincmd h<CR>'") ||
-		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pe :wincmd l<CR>'") ||
-		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pk :wincmd k<CR>'") {
+	if !strings.Contains(cmd, "nnoremap <silent> <leader>pt :wincmd h<CR>") ||
+		!strings.Contains(cmd, "nnoremap <silent> <leader>pe :wincmd l<CR>") ||
+		!strings.Contains(cmd, "nnoremap <silent> <leader>pk :wincmd k<CR>") {
 		t.Fatalf("expected nvim workbench navigation mappings, got %q", cmd)
 	}
 }
@@ -131,34 +134,37 @@ func TestPMTicketsWorkbenchCmd_VimFallback(t *testing.T) {
 	focusPath := filepath.Join(repoRoot, ".swarm", "PM_FOCUS.md")
 	cmd := pmTicketsWorkbenchCmd(repoRoot)
 
-	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && vim '"+kanbanPath+"'") {
+	if !strings.Contains(cmd, "[ -d '"+ticketsDir+"' ] || mkdir -p '"+ticketsDir+"' && vim -n '"+kanbanPath+"'") {
 		t.Fatalf("expected vim fallback command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'belowright split "+focusPath+"'") {
+	if strings.Count(cmd, " -c ") != 1 {
+		t.Fatalf("expected single -c command to avoid vim command count limits, got %q", cmd)
+	}
+	if !strings.Contains(cmd, "belowright split ") || !strings.Contains(cmd, focusPath) {
 		t.Fatalf("expected vim top/bottom split command, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'Lexplore "+ticketsDir+"'") || !strings.Contains(cmd, "-c 'wincmd l'") {
+	if !strings.Contains(cmd, "Lexplore ") || !strings.Contains(cmd, ticketsDir) || !strings.Contains(cmd, "wincmd l") {
 		t.Fatalf("expected vim ticket tree commands, got %q", cmd)
 	}
 	if !commandsAppearInOrder(
 		cmd,
-		"-c 'belowright split "+focusPath+"'",
-		"-c 'Lexplore "+ticketsDir+"'",
-		"-c 'wincmd l'",
-		"-c 'let g:netrw_chgwin=winnr()'",
+		"belowright split ",
+		"Lexplore ",
+		"wincmd l",
+		"let g:netrw_chgwin=winnr()",
 	) {
 		t.Fatalf("expected vim layout commands in deterministic order, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'set mouse=a'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_liststyle=3'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_browse_split=4'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_winsize=30'") ||
-		!strings.Contains(cmd, "-c 'let g:netrw_chgwin=winnr()'") {
+	if !strings.Contains(cmd, "set mouse=a") ||
+		!strings.Contains(cmd, "let g:netrw_liststyle=3") ||
+		!strings.Contains(cmd, "let g:netrw_browse_split=4") ||
+		!strings.Contains(cmd, "let g:netrw_winsize=30") ||
+		!strings.Contains(cmd, "let g:netrw_chgwin=winnr()") {
 		t.Fatalf("expected vim interaction settings, got %q", cmd)
 	}
-	if !strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pt :wincmd h<CR>'") ||
-		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pe :wincmd l<CR>'") ||
-		!strings.Contains(cmd, "-c 'nnoremap <silent> <leader>pk :wincmd k<CR>'") {
+	if !strings.Contains(cmd, "nnoremap <silent> <leader>pt :wincmd h<CR>") ||
+		!strings.Contains(cmd, "nnoremap <silent> <leader>pe :wincmd l<CR>") ||
+		!strings.Contains(cmd, "nnoremap <silent> <leader>pk :wincmd k<CR>") {
 		t.Fatalf("expected vim workbench navigation mappings, got %q", cmd)
 	}
 	if strings.Contains(cmd, "nvim") {

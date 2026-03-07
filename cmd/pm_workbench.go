@@ -47,32 +47,53 @@ func buildPMVimWorkbenchCmd(editor string, paths pmWorkbenchPaths) string {
 }
 
 func buildPMVimEditorArgs(paths pmWorkbenchPaths) []string {
-	editorArgs := []string{shellQuote(paths.kanbanPath)}
-	for _, cmd := range pmVimExCommands(paths) {
-		editorArgs = append(editorArgs, "-c", shellQuote(cmd))
+	return []string{
+		"-n",
+		shellQuote(paths.kanbanPath),
+		"-c",
+		shellQuote(pmVimExCommand(paths)),
 	}
-	return editorArgs
 }
 
-func pmVimExCommands(paths pmWorkbenchPaths) []string {
+func pmVimExCommand(paths pmWorkbenchPaths) string {
 	// Layout:
 	// - Top: PM_KANBAN.md
 	// - Bottom-left: ticket tree
 	// - Bottom-right: editable file (starts at PM_FOCUS.md)
-	return []string{
+	openTicketMapping := "nnoremap <silent> <buffer> <CR> :wincmd l<CR>:execute 'edit ' . fnameescape(" +
+		vimSingleQuote(paths.ticketsDir+"/") + " . getline('.'))<CR>"
+	refreshTicketList := "nnoremap <silent> <buffer> r :execute '0read !ls -1 ' . shellescape(" +
+		vimSingleQuote(paths.ticketsDir) + ")<Bar>1delete _<CR>"
+
+	commands := []string{
 		"set mouse=a",
 		"let g:netrw_banner=0",
 		"let g:netrw_liststyle=3",
 		"let g:netrw_browse_split=4",
 		fmt.Sprintf("let g:netrw_winsize=%d", pmNetrwTreeWidth),
-		"belowright split " + paths.focusPath,
-		"Lexplore " + paths.ticketsDir,
+		"execute 'belowright split ' . fnameescape(" + vimSingleQuote(paths.focusPath) + ")",
+		"if exists(':Lexplore')",
+		"execute 'Lexplore ' . fnameescape(" + vimSingleQuote(paths.ticketsDir) + ")",
+		"else",
+		fmt.Sprintf("execute 'leftabove vertical %dnew'", pmNetrwTreeWidth),
+		"file PM_TICKETS",
+		"setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted nowrap nonumber norelativenumber",
+		"execute '0read !ls -1 ' . shellescape(" + vimSingleQuote(paths.ticketsDir) + ")",
+		"1delete _",
+		openTicketMapping,
+		refreshTicketList,
+		"endif",
 		"wincmd l",
 		"let g:netrw_chgwin=winnr()",
 		"nnoremap <silent> <leader>pt :wincmd h<CR>",
 		"nnoremap <silent> <leader>pe :wincmd l<CR>",
 		"nnoremap <silent> <leader>pk :wincmd k<CR>",
 	}
+	return strings.Join(commands, " | ")
+}
+
+func vimSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func buildPMNanoWorkbenchCmd(paths pmWorkbenchPaths) string {
