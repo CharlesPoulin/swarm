@@ -125,8 +125,6 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 			status = "🤯 struggling"
 		} else if stallCount >= 10 { // approx 5 mins if interval is 30s
 			status = "⏳ stalled"
-		} else if usagelimit.HasWarning(content) {
-			status = usagelimit.ExtractWarningLabel(content)
 		}
 		_ = tmux.SetPaneTitle(paneID, fmt.Sprintf("worker-%d %s", workerNum, status))
 	}
