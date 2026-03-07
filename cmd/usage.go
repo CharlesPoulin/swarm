@@ -11,20 +11,23 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cpoulin/claude-swarm/internal/config"
+	"github.com/cpoulin/claude-swarm/internal/monitor"
 	"github.com/cpoulin/claude-swarm/internal/tmux"
 	"github.com/cpoulin/claude-swarm/internal/usagelimit"
 	"github.com/spf13/cobra"
 )
 
 type usageRow struct {
-	Worker     int
-	PaneID     string
-	CLI        string
-	Status     string
-	ResumeIn   string
-	CheckedAt  string
-	SortKey    int
-	HasSortKey bool
+	Worker       int
+	PaneID       string
+	CLI          string
+	Status       string
+	StatusDetail string
+	LastLine     string
+	ResumeIn     string
+	CheckedAt    string
+	SortKey      int
+	HasSortKey   bool
 }
 
 var usageCmd = &cobra.Command{
@@ -81,6 +84,7 @@ type usageModel struct {
 	lastErr        string
 	limitedHistory []int
 	collect        func(string) ([]usageRow, error)
+	viewMode       string // "table" or "cards"
 }
 
 func newUsageModel(session string, refresh time.Duration) usageModel {
@@ -88,7 +92,7 @@ func newUsageModel(session string, refresh time.Duration) usageModel {
 		{Title: "Worker", Width: 8},
 		{Title: "Pane", Width: 8},
 		{Title: "CLI", Width: 14},
-		{Title: "Status", Width: 14},
+		{Title: "Status", Width: 18},
 		{Title: "Resume In", Width: 12},
 		{Title: "Last Checked", Width: 12},
 	}
@@ -100,10 +104,11 @@ func newUsageModel(session string, refresh time.Duration) usageModel {
 	t.SetStyles(styles)
 
 	return usageModel{
-		session: session,
-		refresh: refresh,
-		table:   t,
-		collect: collectUsageRows,
+		session:  session,
+		refresh:  refresh,
+		table:    t,
+		collect:  collectUsageRows,
+		viewMode: "cards",
 	}
 }
 
@@ -117,6 +122,12 @@ func (m usageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
+		case "t":
+			if m.viewMode == "table" {
+				m.viewMode = "cards"
+			} else {
+				m.viewMode = "table"
+			}
 		}
 	case tea.WindowSizeMsg:
 		if msg.Height > 8 {
@@ -145,30 +156,108 @@ func (m usageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m usageModel) View() string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render("Agent Usage")
-	sub := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(
-		fmt.Sprintf("session=%s | refresh=%s | q:quit", m.session, m.refresh.String()),
-	)
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("33")).
+		Padding(0, 1).
+		MarginBottom(1)
 
-	body := "No workers found in swarm window."
-	if len(m.rows) > 0 {
-		body = m.table.View()
-	}
+	title := titleStyle.Render("🤖 SWARM DASHBOARD")
+	sub := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(
+		fmt.Sprintf(" session=%s | refresh=%s | q:quit", m.session, m.refresh.String()),
+	)
 
 	active, limited := summarizeRows(m.rows)
 	topCLI, topCount := topCLI(m.rows)
-	summary := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(
-		fmt.Sprintf("active=%d  limited=%d  total=%d  top-cli=%s(%d)", active, limited, len(m.rows), topCLI, topCount),
-	)
-	graphLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("limited trend")
-	graph := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(renderSparkline(m.limitedHistory))
 
-	status := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(fmt.Sprintf("workers=%d", len(m.rows)))
-	if m.lastErr != "" {
-		status = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render("error: " + m.lastErr)
+	summaryStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		MarginBottom(1)
+
+	summaryContent := fmt.Sprintf("✅ Active: %d  |  ⏳ Limited: %d  |  🤖 Total: %d  |  🏆 Top: %s (%d)",
+		active, limited, len(m.rows), topCLI, topCount)
+	summary := summaryStyle.Render(summaryContent)
+
+	graphLabel := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Limited Trend: ")
+	graph := lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(renderSparkline(m.limitedHistory))
+	header := lipgloss.JoinVertical(lipgloss.Left, title+sub, summary, graphLabel+graph)
+
+	var body string
+	if len(m.rows) == 0 {
+		body = "\n  No workers found in swarm window."
+	} else if m.viewMode == "table" {
+		body = m.table.View()
+	} else {
+		// Create cards for each worker
+		var cards []string
+		cardStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			Width(45).
+			Height(6).
+			Padding(0, 1).
+			Margin(0, 1, 1, 0)
+
+		for _, r := range m.rows {
+			workerTitle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")).Render(fmt.Sprintf("Worker %d", r.Worker))
+			cliInfo := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(fmt.Sprintf("[%s] (%s)", r.CLI, r.PaneID))
+
+			statusColor := "34" // green
+			if r.Status == "usage-limited" {
+				statusColor = "196" // red
+			}
+			status := lipgloss.NewStyle().Foreground(lipgloss.Color(statusColor)).Bold(true).Render(r.StatusDetail)
+
+			resume := ""
+			if r.Status == "usage-limited" {
+				resume = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(fmt.Sprintf(" (Wait %s)", r.ResumeIn))
+			}
+
+			lastLine := r.LastLine
+			if len(lastLine) > 40 {
+				lastLine = lastLine[:37] + "..."
+			}
+			lastLineRender := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("242")).Render(lastLine)
+
+			cardContent := lipgloss.JoinVertical(lipgloss.Left,
+				lipgloss.JoinHorizontal(lipgloss.Top, workerTitle, " ", cliInfo),
+				"Status: "+status+resume,
+				"",
+				"Last activity:",
+				lastLineRender,
+			)
+			cards = append(cards, cardStyle.Render(cardContent))
+		}
+
+		// Arrange cards in a grid (2 columns)
+		var rows []string
+		for i := 0; i < len(cards); i += 2 {
+			if i+1 < len(cards) {
+				rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, cards[i], cards[i+1]))
+			} else {
+				rows = append(rows, cards[i])
+			}
+		}
+		body = lipgloss.JoinVertical(lipgloss.Left, rows...)
 	}
 
-	return title + "\n" + sub + "\n\n" + summary + "\n" + graphLabel + ": " + graph + "\n\n" + body + "\n\n" + status
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  ↑/↓: scroll table | q: quit | t: toggle layout | refresh: " + m.refresh.String())
+
+	footer := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("245")).MarginTop(1).Render(
+			fmt.Sprintf("  Last updated: %s", time.Now().Format("15:04:05")),
+		),
+		lipgloss.NewStyle().MarginTop(1).MarginLeft(4).Render(help),
+	)
+
+	if m.lastErr != "" {
+		footer += lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(" | Error: " + m.lastErr)
+	}
+
+	return lipgloss.NewStyle().Margin(1, 2).Render(lipgloss.JoinVertical(lipgloss.Left, header, body, footer))
 }
 
 func (m usageModel) refreshCmd() tea.Cmd {
@@ -182,7 +271,11 @@ func toTableRows(rows []usageRow) []table.Row {
 		if r.Worker > 0 {
 			worker = strconv.Itoa(r.Worker)
 		}
-		out = append(out, table.Row{worker, r.PaneID, r.CLI, r.Status, r.ResumeIn, r.CheckedAt})
+		status := r.Status
+		if r.StatusDetail != "" {
+			status = r.StatusDetail
+		}
+		out = append(out, table.Row{worker, r.PaneID, r.CLI, status, r.ResumeIn, r.CheckedAt})
 	}
 	return out
 }
@@ -217,15 +310,28 @@ func rowFromPane(pane tmux.PaneInfo, content, checkedAt string) usageRow {
 		resumeIn = formatWait(wait)
 	}
 
+	detail := monitor.ExtractStatus(content)
+	lastLine := ""
+	lines := strings.Split(content, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l != "" {
+			lastLine = l
+			break
+		}
+	}
+
 	return usageRow{
-		Worker:     workerFromPaneTitle(pane.Title),
-		PaneID:     pane.ID,
-		CLI:        deriveCLI(pane),
-		Status:     status,
-		ResumeIn:   resumeIn,
-		CheckedAt:  checkedAt,
-		SortKey:    pane.Index,
-		HasSortKey: true,
+		Worker:       workerFromPaneTitle(pane.Title),
+		PaneID:       pane.ID,
+		CLI:          deriveCLI(pane),
+		Status:       status,
+		StatusDetail: detail,
+		LastLine:     lastLine,
+		ResumeIn:     resumeIn,
+		CheckedAt:    checkedAt,
+		SortKey:      pane.Index,
+		HasSortKey:   true,
 	}
 }
 

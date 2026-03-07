@@ -67,7 +67,7 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 		lastContent = content
 
 		// Simple check for common error markers in the last few lines
-		if isStruggling(content) {
+		if IsStruggling(content) {
 			failureCount++
 		} else {
 			if failureCount > 0 {
@@ -120,7 +120,7 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 		}
 
 		// Update status in title if not in wait state or assignment state
-		status := extractStatus(content)
+		status := ExtractStatus(content)
 		if failureCount >= 3 {
 			status = "🤯 struggling"
 		} else if stallCount >= 10 { // approx 5 mins if interval is 30s
@@ -130,7 +130,7 @@ func Watch(ctx context.Context, cfg *config.Config, session, paneID string, work
 	}
 }
 
-func isStruggling(content string) bool {
+func IsStruggling(content string) bool {
 	lines := strings.Split(content, "\n")
 	if len(lines) == 0 {
 		return false
@@ -153,7 +153,7 @@ func isStruggling(content string) bool {
 	return false
 }
 
-func extractStatus(content string) string {
+func ExtractStatus(content string) string {
 	// Simple heuristic to find what the agent is doing
 	// This can be refined based on specific CLI output patterns
 	if content == "" {
