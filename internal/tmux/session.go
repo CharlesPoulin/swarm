@@ -73,7 +73,19 @@ func NewWindowNoIndex(session, cwd, name string) error {
 
 // SendKeys sends keystrokes to a pane (target can be "session:window" or "session:window.pane").
 func SendKeys(target, keys string) error {
-	return run("send-keys", "-t", target, keys, "Enter")
+	return SendKeysLines(target, keys)
+}
+
+// SendKeysLines sends one or more lines to a pane, pressing Enter after each line.
+func SendKeysLines(target string, lines ...string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	args := []string{"send-keys", "-t", target}
+	for _, line := range lines {
+		args = append(args, line, "Enter")
+	}
+	return run(args...)
 }
 
 // RenameWindow renames a window identified by target.
