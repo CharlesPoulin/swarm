@@ -1037,7 +1037,7 @@ func cliCmdFor(cfg *config.Config, worker, worktreeDir, ticketFile string) strin
 		return "echo 'Spare pane ready.' && exec bash"
 	case "pm":
 		promptPath := filepath.Join(worktreeDir, ".swarm", "PM_PROMPT.md")
-		return fmt.Sprintf(`claude --message "$(cat '%s')"`, promptPath)
+		return fmt.Sprintf(`codex "$(cat '%s')"`, promptPath)
 	}
 	cmd := cliName
 	if model != "" {
@@ -1052,7 +1052,12 @@ func cliCmdFor(cfg *config.Config, worker, worktreeDir, ticketFile string) strin
 		}
 	}
 	if ticketFile != "" {
-		cmd += fmt.Sprintf(` --message "$(cat '%s')"`, filepath.Join(worktreeDir, ticketFile))
+		promptPath := filepath.Join(worktreeDir, ticketFile)
+		if cliName == "codex" {
+			cmd += fmt.Sprintf(` "$(cat '%s')"`, promptPath)
+		} else {
+			cmd += fmt.Sprintf(` --message "$(cat '%s')"`, promptPath)
+		}
 	}
 	return cmd
 }
