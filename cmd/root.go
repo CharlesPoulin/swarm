@@ -32,7 +32,9 @@ var rootCmd = &cobra.Command{
 	Version: Version,
 	Long: `claude-swarm creates a tmux session with:
   - Window 1 "swarm": 2x3 agents by default
-  - Window 2 "hub":   editor (left) + review/git view (right)`,
+  - Window 2 "hub":   editor (left) + review/git view (right)
+  - Window 3 "usage": per-agent usage dashboard
+  - Window 4 "dispatch" (or window 5 when PM is enabled)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -276,6 +278,10 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
+	if err := setupDispatchWindow(cfg); err != nil {
+		return err
+	}
+
 	bindKeybindings(cfg, nvimID, reviewID, pmWindowName)
 
 	return runAndMonitor(cfg, repoRoot, workers, worktreeDirs, paneMappings, pmWindowName, w)
@@ -332,13 +338,15 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 	if containsCLIType(workers, "pm") {
 		pmHint = "  #[fg=colour39]Alt+4#[fg=colour245]:pm"
 	}
+	dispatchHint := "  #[fg=colour39]Alt+5#[fg=colour245]:dispatch"
 	statusRight := fmt.Sprintf(
 		"#[bg=colour235,fg=colour33]v%s#[fg=colour245]  "+
 			"#[fg=colour245]%d agents  "+
 			"%s"+
+			"%s"+
 			"#[fg=colour196]Ctrl+Q#[fg=colour245]:quit  "+
 			"#[fg=colour39]%s",
-		Version, len(workers), pmHint, Repo)
+		Version, len(workers), pmHint, dispatchHint, Repo)
 
 	statusOpts := [][2]string{
 		{"status", "on"},
@@ -369,6 +377,13 @@ func setupUsageWindow(cfg *config.Config) error {
 		refreshSecs = 30
 	}
 	return tmux.SendKeys(fmt.Sprintf("%s:usage", cfg.Session), usageWindowCommand(cfg.Session, refreshSecs))
+}
+
+func setupDispatchWindow(cfg *config.Config) error {
+	if err := tmux.NewWindowNoIndex(cfg.Session, ".", "dispatch"); err != nil {
+		return fmt.Errorf("creating dispatch window: %w", err)
+	}
+	return tmux.SendKeys(fmt.Sprintf("%s:dispatch", cfg.Session), dispatchWindowCommand(cfg.Session))
 }
 
 type paneMapping struct {
@@ -561,6 +576,8 @@ func bindKeybindings(cfg *config.Config, hubPaneID, rightPaneID, pmWindowName st
 		_ = tmux.BindKey(cfg.Session, "-n", "M-4",
 			fmt.Sprintf("select-window -t '%s:%s'", cfg.Session, pmWindowName))
 	}
+	_ = tmux.BindKey(cfg.Session, "-n", "M-5",
+		fmt.Sprintf("select-window -t '%s:dispatch'", cfg.Session))
 
 	// Ctrl+b v → nvim basics quick reference
 	_ = tmux.BindKey(cfg.Session, "", "v", nvimBasicsPopupCommand())
@@ -575,9 +592,9 @@ func bindKeybindings(cfg *config.Config, hubPaneID, rightPaneID, pmWindowName st
 		"confirm-before -p \"Reset this worktree to origin/main and clear context? (y/n)\" "+
 			"\"new-window -c '#{pane_current_path}' 'claude-swarm reset -y --pane \\\"#{pane_id}\\\"; echo; read -p \\\"Press Enter to close…\\\"'\"")
 
-	// Ctrl+b D → open task-dispatch TUI in a popup
+	// Ctrl+b D → jump to dispatch tab
 	_ = tmux.BindKey(cfg.Session, "", "D",
-		fmt.Sprintf("display-popup -E -w 80 -h 24 \"claude-swarm dispatch -s '%s'\"", cfg.Session))
+		fmt.Sprintf("select-window -t '%s:dispatch'", cfg.Session))
 
 	// Ctrl+Q → kill session (no prefix)
 	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
@@ -610,7 +627,7 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs []
 	if pmWindowName != "" {
 		pmHelp = "  |  PM: Alt+4"
 	}
-	fmt.Printf("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Review: Ctrl+b p  |  Agents: Alt+1%s\n", pmHelp)
+	fmt.Printf("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Review: Ctrl+b p  |  Agents: Alt+1%s  |  Dispatch: Alt+5\n", pmHelp)
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
