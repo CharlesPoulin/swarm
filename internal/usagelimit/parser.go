@@ -10,16 +10,39 @@ var (
 	errorRe = regexp.MustCompile(
 		`(?i)(exceeded your usage limit|exceeded your current quota|insufficient.{0,10}quota|usage limits.{0,60}try again after|rate limit.{0,60}retry after)`,
 	)
-	utcTimeRe = regexp.MustCompile(`(?i)after (\d+):(\d+) UTC`)
-	hoursRe   = regexp.MustCompile(`(?i)in (\d+) hours?`)
-	minsRe    = regexp.MustCompile(`(?i)(\d+) minutes?`)
-	secsRe    = regexp.MustCompile(`(?i)in (\d+) seconds?`)
-	shortRe   = regexp.MustCompile(`(?i)in (\d+)m(\d+)s`)
+	utcTimeRe  = regexp.MustCompile(`(?i)after (\d+):(\d+) UTC`)
+	hoursRe    = regexp.MustCompile(`(?i)in (\d+) hours?`)
+	minsRe     = regexp.MustCompile(`(?i)(\d+) minutes?`)
+	secsRe     = regexp.MustCompile(`(?i)in (\d+) seconds?`)
+	shortRe    = regexp.MustCompile(`(?i)in (\d+)m(\d+)s`)
+	warn5hRe   = regexp.MustCompile(`(?i)(\d+)%\s+of\s+(?:your\s+)?5.?hour`)
+	warnWeekRe = regexp.MustCompile(`(?i)(\d+)%\s+of\s+(?:your\s+)?week`)
 )
 
 // HasError reports whether text contains an API usage-limit message.
 func HasError(text string) bool {
 	return errorRe.MatchString(text)
+}
+
+// HasWarning reports whether text contains a usage percentage warning (approaching limit).
+func HasWarning(text string) bool {
+	return warn5hRe.MatchString(text) || warnWeekRe.MatchString(text)
+}
+
+// ExtractWarningLabel returns a short display label like "⚠️ 65%/5h 89%/wk" from warning text.
+// Returns empty string if no warning is found.
+func ExtractWarningLabel(text string) string {
+	label := ""
+	if m := warn5hRe.FindStringSubmatch(text); len(m) == 2 {
+		label += m[1] + "%/5h "
+	}
+	if m := warnWeekRe.FindStringSubmatch(text); len(m) == 2 {
+		label += m[1] + "%/wk"
+	}
+	if label == "" {
+		return ""
+	}
+	return "⚠️ " + label
 }
 
 // ExtractWaitSecs parses the wait duration from error text and returns seconds.

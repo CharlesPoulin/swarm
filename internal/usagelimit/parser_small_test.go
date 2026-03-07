@@ -29,6 +29,45 @@ func TestHasError(t *testing.T) {
 	}
 }
 
+func TestHasWarning(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"You have used 65% of your 5-hour usage limit.", true},
+		{"You have used 89% of your weekly usage limit.", true},
+		{"used 50% of your 5hour quota", true},
+		{"everything is fine", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			if got := usagelimit.HasWarning(tc.text); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractWarningLabel(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"You have used 65% of your 5-hour usage limit.", "⚠️ 65%/5h "},
+		{"You have used 89% of your weekly usage limit.", "⚠️ 89%/wk"},
+		{"used 65% of your 5-hour limit and 89% of your weekly limit.", "⚠️ 65%/5h 89%/wk"},
+		{"nothing here", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.text, func(t *testing.T) {
+			if got := usagelimit.ExtractWarningLabel(tc.text); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestExtractWaitSecs(t *testing.T) {
 	t.Run("UTCTimestamp", func(t *testing.T) {
 		future := time.Now().UTC().Add(2 * time.Hour)
