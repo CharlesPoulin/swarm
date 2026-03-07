@@ -41,6 +41,8 @@ claude-swarm reset
 | `--cli-flags` | `` | Extra flags passed to each worker CLI command |
 | `-a` | — | Add workers to a running session |
 
+`pm` can be included in `-t` / `cli_type`; it opens in a dedicated PM tab (`Alt+4`) and does not appear in the swarm grid.
+
 ## Config file
 
 Put defaults in `~/.claude-swarm.yaml` so you don't have to retype flags:
@@ -63,6 +65,7 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 | `Alt+0` | Hub window |
 | `Alt+1–9` | Worker windows |
 | `Alt+3` | Usage window |
+| `Alt+4` | PM window (when configured) |
 | `Ctrl+b e` | Jump to editor (nvim) |
 | `Ctrl+b g` | Jump to hub right pane (review/git) |
 | `Ctrl+b p` | Jump to PR review pane |
@@ -70,6 +73,10 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 | `Ctrl+b R` | Reset current worktree to `origin/main` and send `/clear` |
 | `Ctrl+b +` | Add a new worker on the fly |
 | `Ctrl+b d` | Detach (stops monitors, prompts cleanup) |
+
+When `pm` is enabled, PM window has:
+- `tickets` pane: edit `.swarm/PM_TASK.md` and ticket files under `.swarm/tickets/`
+- `worker-N (pm)` pane: PM chat that can create/update tickets
 
 ## PR Review
 
