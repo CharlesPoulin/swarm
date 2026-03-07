@@ -62,14 +62,22 @@ func pmVimExCommand(paths pmWorkbenchPaths) string {
 	// - Bottom-right: editable file (starts at PM_FOCUS.md)
 	openTicketMapping := "nnoremap <silent> <buffer> <CR> :wincmd l<CR>:execute 'edit ' . fnameescape(" +
 		vimSingleQuote(paths.ticketsDir+"/") + " . getline('.'))<CR>"
+	openTicketMappingO := "nnoremap <silent> <buffer> o :wincmd l<CR>:execute 'edit ' . fnameescape(" +
+		vimSingleQuote(paths.ticketsDir+"/") + " . getline('.'))<CR>"
+	openTicketMappingSpace := "nnoremap <silent> <buffer> <Space> :wincmd l<CR>:execute 'edit ' . fnameescape(" +
+		vimSingleQuote(paths.ticketsDir+"/") + " . getline('.'))<CR>"
+	openTicketMouse := "nnoremap <silent> <buffer> <2-LeftMouse> :wincmd l<CR>:execute 'edit ' . fnameescape(" +
+		vimSingleQuote(paths.ticketsDir+"/") + " . getline('.'))<CR>"
 	refreshTicketList := "nnoremap <silent> <buffer> r :execute '0read !ls -1 ' . shellescape(" +
 		vimSingleQuote(paths.ticketsDir) + ")<Bar>1delete _<CR>"
 
 	commands := []string{
 		"set mouse=a",
+		"set splitright",
 		"let g:netrw_banner=0",
 		"let g:netrw_liststyle=3",
 		"let g:netrw_browse_split=4",
+		"let g:netrw_mousemaps=1",
 		fmt.Sprintf("let g:netrw_winsize=%d", pmNetrwTreeWidth),
 		"execute 'belowright split ' . fnameescape(" + vimSingleQuote(paths.focusPath) + ")",
 		"if exists(':Lexplore')",
@@ -81,10 +89,18 @@ func pmVimExCommand(paths pmWorkbenchPaths) string {
 		"execute '0read !ls -1 ' . shellescape(" + vimSingleQuote(paths.ticketsDir) + ")",
 		"1delete _",
 		openTicketMapping,
+		openTicketMappingO,
+		openTicketMappingSpace,
+		openTicketMouse,
 		refreshTicketList,
+		"nnoremap <silent> <buffer> <Tab> :wincmd l<CR>",
+		"nnoremap <silent> <buffer> <S-Tab> :wincmd h<CR>",
+		"echo 'PM tickets: Enter/o/Space or double-click to open, r refresh, Tab switch pane'",
 		"endif",
 		"wincmd l",
 		"let g:netrw_chgwin=winnr()",
+		"nnoremap <silent> <Tab> :wincmd l<CR>",
+		"nnoremap <silent> <S-Tab> :wincmd h<CR>",
 		"nnoremap <silent> <leader>pt :wincmd h<CR>",
 		"nnoremap <silent> <leader>pe :wincmd l<CR>",
 		"nnoremap <silent> <leader>pk :wincmd k<CR>",
