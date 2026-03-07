@@ -385,6 +385,11 @@ func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
 		"confirm-before -p \"Ship this worktree as a PR? (y/n)\" "+
 			"\"new-window -c '#{pane_current_path}' 'claude-swarm ship; echo; read -p \\\"Press Enter to close…\\\"'\"")
 
+	// Ctrl+b R → reset current worktree to origin/main + clear pane context
+	_ = tmux.BindKey(cfg.Session, "", "R",
+		"confirm-before -p \"Reset this worktree to origin/main and clear context? (y/n)\" "+
+			"\"new-window -c '#{pane_current_path}' 'claude-swarm reset -y --pane \\\"#{pane_id}\\\"; echo; read -p \\\"Press Enter to close…\\\"'\"")
+
 	// Ctrl+Q → kill session (no prefix)
 	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
 		fmt.Sprintf("kill-session -t '%s'", cfg.Session))
