@@ -21,9 +21,12 @@ claude-swarm
 ```
 
 That's it. You get:
-- Window `0` — hub: nvim on the left, PR review on the right (`gh` required; falls back to lazygit/git view)
+- Window `swarm` — worker pane grid
+- Window `hub` — nvim on the left, PR review on the right (`gh` required; falls back to lazygit/git view)
 - Window `usage` — live per-agent usage/limit dashboard
-- Windows `1–N` — one Claude per worktree on a fresh branch
+- Window `dispatch` — route tickets/tasks to workers
+- Window `settings` — interactive editor for common swarm settings (`~/.claude-swarm.yaml`)
+- PM windows (`pm`, `pm-2`, ...) when configured
 
 After merging a PR from a worker, reset that worktree back to `main` state:
 ```bash
@@ -52,6 +55,7 @@ num: 3
 cli_type: codex,codex,claude,gemini:gemini-3-flash-preview,gemini:gemini-3-flash-preview,spare,pm
 cli_flags: ""
 pm_bootstrap_mode: prompt    # prompt (default), full, or none
+dispatch_plan_mode: true     # dispatch sends /plan + task by default
 session: myswarm
 resume_buffer_secs: 120   # extra wait after usage-limit expires
 monitor_interval: 30       # how often to check for usage-limit errors (secs)
@@ -59,14 +63,23 @@ hub_mode: review           # review (default) or git for the hub right pane
 review_refresh_secs: 30    # PR review auto-refresh cadence
 ```
 
+## Dispatch behavior
+
+- By default, dispatch sends two commands to workers: `/plan` then the task prompt.
+- This applies to both quick tasks and ticket dispatch, so workers start directly in Plan mode without extra keypresses.
+- Set `dispatch_plan_mode: false` in `~/.claude-swarm.yaml` to disable Plan-mode dispatch.
+- If a worker CLI does not support Plan mode, dispatch falls back to normal prompt delivery and shows an explicit notice in the dispatch result.
+
 ## Keybindings (inside the session)
 
 | Key | Action |
 |-----|--------|
-| `Alt+0` | Hub window |
-| `Alt+1–9` | Worker windows |
+| `Alt+1` | Swarm window |
+| `Alt+2` | Hub window |
 | `Alt+3` | Usage window |
 | `Alt+4` | PM window (when configured) |
+| `Alt+5` | Dispatch window |
+| `Alt+6` | Settings window |
 | `Ctrl+b e` | Jump to editor (nvim) |
 | `Ctrl+b g` | Jump to hub right pane (review/git) |
 | `Ctrl+b p` | Jump to PR review pane |
@@ -74,6 +87,21 @@ review_refresh_secs: 30    # PR review auto-refresh cadence
 | `Ctrl+b R` | Reset current worktree to `origin/main` and send `/clear` |
 | `Ctrl+b +` | Add a new worker on the fly |
 | `Ctrl+b d` | Detach (stops monitors, prompts cleanup) |
+
+## Settings tab
+
+Open the settings UI with `Alt+6` (or run `claude-swarm settings` directly).
+
+- Use `↑/↓` to pick a setting, `Enter` to edit.
+- Use `s` to save all values to `~/.claude-swarm.yaml`.
+- Use `r` to reload from disk.
+- Invalid input is rejected with an explicit message and no config write.
+
+Example flow:
+1. Press `Alt+6`.
+2. Select `Monitor Interval`, press `Enter`, type `20`, press `Enter`.
+3. Press `s` to persist.
+4. Re-open the tab later and press `r` to confirm the saved value.
 
 When `pm` is enabled, PM window has:
 - `tickets` pane: opens `.swarm/PM_KANBAN.md` plus `.swarm/PM_FOCUS.md` (bottom split), with ticket files under `.swarm/tickets/`

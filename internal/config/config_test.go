@@ -18,4 +18,7 @@ func TestSetDefaults_PM_BootstrapMode(t *testing.T) {
 	if cfg.PMBootstrapMode != "prompt" {
 		t.Fatalf("PMBootstrapMode=%q, want %q", cfg.PMBootstrapMode, "prompt")
 	}
+	if !cfg.DispatchPlanMode {
+		t.Fatalf("DispatchPlanMode=%v, want true", cfg.DispatchPlanMode)
+	}
 }

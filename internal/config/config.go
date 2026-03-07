@@ -12,6 +12,7 @@ type Config struct {
 	CLIFlags          string `mapstructure:"cli_flags"`
 	PMBootstrapMode   string `mapstructure:"pm_bootstrap_mode"` // prompt|full|none
 	AddMode           bool   `mapstructure:"add_mode"`
+	DispatchPlanMode  bool   `mapstructure:"dispatch_plan_mode"`
 	ResumeBufferSec   int    `mapstructure:"resume_buffer_secs"`
 	MonitorInterval   int    `mapstructure:"monitor_interval"`
 	WorktreePrefix    string `mapstructure:"worktree_prefix"`
@@ -30,6 +31,7 @@ func SetDefaults() {
 	viper.SetDefault("cli_flags", "")
 	viper.SetDefault("pm_bootstrap_mode", "prompt")
 	viper.SetDefault("add_mode", false)
+	viper.SetDefault("dispatch_plan_mode", true)
 	viper.SetDefault("resume_buffer_secs", 120)
 	viper.SetDefault("monitor_interval", 30)
 	viper.SetDefault("worktree_prefix", ".wt")

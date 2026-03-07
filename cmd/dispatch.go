@@ -69,9 +69,10 @@ type dispatchModel struct {
 	width        int
 	session      string
 	ticketsDir   string
+	dispatchPlan bool
 }
 
-func newDispatchModel(session, ticketsDir string) dispatchModel {
+func newDispatchModel(session, ticketsDir string, dispatchPlan bool) dispatchModel {
 	ti := textinput.New()
 	ti.Placeholder = "Describe the task…"
 	ti.Focus()
@@ -82,12 +83,13 @@ func newDispatchModel(session, ticketsDir string) dispatchModel {
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 
 	return dispatchModel{
-		phase:      phaseTask,
-		input:      ti,
-		spinner:    sp,
-		session:    session,
-		ticketsDir: ticketsDir,
-		width:      72,
+		phase:        phaseTask,
+		input:        ti,
+		spinner:      sp,
+		session:      session,
+		ticketsDir:   ticketsDir,
+		dispatchPlan: dispatchPlan,
+		width:        72,
 	}
 }
 
@@ -264,6 +266,7 @@ func (m dispatchModel) doSend() (tea.Model, tea.Cmd) {
 	cursor := m.cursor
 	workers := m.workers
 	ticketsDir := m.ticketsDir
+	dispatchPlan := m.dispatchPlan
 
 	return m, tea.Batch(
 		m.spinner.Tick,
@@ -280,13 +283,20 @@ func (m dispatchModel) doSend() (tea.Model, tea.Cmd) {
 				return aiRoutedMsg{idx: idx}
 			}
 			w := workers[cursor-1]
-			if err := sendTaskToWorker(task, selected, &w, ticketsDir); err != nil {
+			notice, err := sendTaskToWorker(task, selected, &w, ticketsDir, dispatchPlan)
+			if err != nil {
 				return dispatchErrMsg{err}
 			}
 			if selected != nil {
-				return dispatchSentMsg(fmt.Sprintf("Ticket %s sent to %s (%s)", selected.ID, w.name, w.cliType))
+				return dispatchSentMsg(formatDispatchResult(
+					fmt.Sprintf("Ticket %s sent to %s (%s)", selected.ID, w.name, w.cliType),
+					notice,
+				))
 			}
-			return dispatchSentMsg(fmt.Sprintf("Task sent to %s (%s)", w.name, w.cliType))
+			return dispatchSentMsg(formatDispatchResult(
+				fmt.Sprintf("Task sent to %s (%s)", w.name, w.cliType),
+				notice,
+			))
 		},
 	)
 }
@@ -303,6 +313,7 @@ func (m dispatchModel) updateSending(msg tea.Msg) (tea.Model, tea.Cmd) {
 		selected := m.selected
 		workers := m.workers
 		ticketsDir := m.ticketsDir
+		dispatchPlan := m.dispatchPlan
 		if idx < 0 || idx >= len(workers) {
 			m.phase = phaseDispatchError
 			m.err = fmt.Errorf("no eligible workers found")
@@ -310,13 +321,20 @@ func (m dispatchModel) updateSending(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, func() tea.Msg {
 			w := workers[idx]
-			if err := sendTaskToWorker(task, selected, &w, ticketsDir); err != nil {
+			notice, err := sendTaskToWorker(task, selected, &w, ticketsDir, dispatchPlan)
+			if err != nil {
 				return dispatchErrMsg{err}
 			}
 			if selected != nil {
-				return dispatchSentMsg(fmt.Sprintf("AI routed ticket %s to %s (%s)", selected.ID, w.name, w.cliType))
+				return dispatchSentMsg(formatDispatchResult(
+					fmt.Sprintf("AI routed ticket %s to %s (%s)", selected.ID, w.name, w.cliType),
+					notice,
+				))
 			}
-			return dispatchSentMsg(fmt.Sprintf("AI routed task to %s (%s)", w.name, w.cliType))
+			return dispatchSentMsg(formatDispatchResult(
+				fmt.Sprintf("AI routed task to %s (%s)", w.name, w.cliType),
+				notice,
+			))
 		}
 	case dispatchSentMsg:
 		m.phase = phaseDone
@@ -652,14 +670,27 @@ func firstIdleWorker(workers []workerInfo) int {
 
 // ── Send ──────────────────────────────────────────────────────────────────────
 
+var (
+	dispatchSendKeys      = tmux.SendKeys
+	dispatchSendKeysLines = tmux.SendKeysLines
+)
+
+func formatDispatchResult(base, notice string) string {
+	notice = strings.TrimSpace(notice)
+	if notice == "" {
+		return base
+	}
+	return base + " — " + notice
+}
+
 // sendTaskToWorker assigns an existing ticket (if provided) or creates a new one, then prompts the worker.
-func sendTaskToWorker(task string, selected *ticket.Ticket, w *workerInfo, ticketsDir string) error {
+func sendTaskToWorker(task string, selected *ticket.Ticket, w *workerInfo, ticketsDir string, dispatchPlan bool) (string, error) {
 	if selected != nil {
 		t := selected
 		if ticketsDir != "" {
 			store := ticket.NewStore(ticketsDir)
 			if err := store.Assign(t.ID, w.name); err != nil {
-				return err
+				return "", err
 			}
 			if fresh, err := store.Get(t.ID); err == nil && fresh != nil {
 				t = fresh
@@ -667,10 +698,10 @@ func sendTaskToWorker(task string, selected *ticket.Ticket, w *workerInfo, ticke
 		}
 		if w.worktreeDir != "" {
 			if err := ticket.WriteCurrentTicket(w.worktreeDir, t); err == nil {
-				return tmux.SendKeys(w.paneID, "Read CURRENT_TICKET.md and implement the task")
+				return sendDispatchPrompt(w, "Read CURRENT_TICKET.md and implement the task", dispatchPlan)
 			}
 		}
-		return tmux.SendKeys(w.paneID, fmt.Sprintf("Ticket %s: %s", t.ID, task))
+		return sendDispatchPrompt(w, fmt.Sprintf("Ticket %s: %s", t.ID, task), dispatchPlan)
 	}
 
 	if ticketsDir != "" && w.worktreeDir != "" {
@@ -679,10 +710,49 @@ func sendTaskToWorker(task string, selected *ticket.Ticket, w *workerInfo, ticke
 		if err == nil {
 			_ = store.Assign(t.ID, w.name)
 			_ = ticket.WriteCurrentTicket(w.worktreeDir, t)
-			return tmux.SendKeys(w.paneID, "Read CURRENT_TICKET.md and implement the task")
+			return sendDispatchPrompt(w, "Read CURRENT_TICKET.md and implement the task", dispatchPlan)
 		}
 	}
-	return tmux.SendKeys(w.paneID, task)
+	return sendDispatchPrompt(w, task, dispatchPlan)
+}
+
+func sendDispatchPrompt(w *workerInfo, prompt string, dispatchPlan bool) (string, error) {
+	lines, notice := dispatchPromptForWorker(prompt, w.cliType, dispatchPlan)
+	if len(lines) == 0 {
+		return notice, fmt.Errorf("empty dispatch prompt")
+	}
+	if len(lines) == 1 {
+		return notice, dispatchSendKeys(w.paneID, lines[0])
+	}
+	return notice, dispatchSendKeysLines(w.paneID, lines...)
+}
+
+func dispatchPromptForWorker(prompt, cliType string, dispatchPlan bool) ([]string, string) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return nil, ""
+	}
+	if !dispatchPlan {
+		return []string{prompt}, ""
+	}
+	if !supportsDispatchPlanMode(cliType) {
+		normalized := strings.TrimSpace(cliType)
+		if normalized == "" {
+			normalized = "unknown"
+		}
+		return []string{prompt}, fmt.Sprintf(`Plan mode not supported by CLI "%s"; sent regular dispatch.`, normalized)
+	}
+	return []string{"/plan", prompt}, ""
+}
+
+func supportsDispatchPlanMode(cliType string) bool {
+	cliName, _ := parseWorker(strings.TrimSpace(cliType))
+	switch cliName {
+	case "codex", "claude", "gemini", "pm":
+		return true
+	default:
+		return false
+	}
 }
 
 // ── Cobra command ─────────────────────────────────────────────────────────────
@@ -710,7 +780,7 @@ var dispatchCmd = &cobra.Command{
 				ticketsDir = filepath.Join(strings.TrimSpace(string(repoRoot)), ticketsDir)
 			}
 		}
-		m := newDispatchModel(cfg.Session, ticketsDir)
+		m := newDispatchModel(cfg.Session, ticketsDir, cfg.DispatchPlanMode)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		_, err = p.Run()
 		return err
