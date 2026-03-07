@@ -14,6 +14,7 @@ import (
 	"github.com/cpoulin/claude-swarm/internal/config"
 	"github.com/cpoulin/claude-swarm/internal/git"
 	"github.com/cpoulin/claude-swarm/internal/monitor"
+	"github.com/cpoulin/claude-swarm/internal/ticket"
 	"github.com/cpoulin/claude-swarm/internal/tmux"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -30,7 +31,7 @@ var rootCmd = &cobra.Command{
 	Version: Version,
 	Long: `claude-swarm creates a tmux session with:
   - Window 1 "swarm": 2x3 agents by default
-  - Window 2 "hub":   editor (left) + git view (right)`,
+  - Window 2 "hub":   editor (left) + review/git view (right)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -56,6 +57,7 @@ func init() {
 	f.StringP("type", "t", "", "AI CLI(s) to use: claude|gemini|codex|spare (or comma list, e.g. codex,codex,claude,gemini,gemini,spare)")
 	f.String("cli-flags", "", "Extra flags passed to each AI CLI command")
 	f.BoolP("add", "a", false, "Add workers to an existing session instead of restarting")
+	f.String("assign-mode", "", "Ticket assignment mode: parallel|sequential|manual")
 
 	_ = viper.BindPFlag("num", f.Lookup("num"))
 	_ = viper.BindPFlag("session", f.Lookup("session"))
@@ -63,6 +65,7 @@ func init() {
 	_ = viper.BindPFlag("cli_type", f.Lookup("type"))
 	_ = viper.BindPFlag("cli_flags", f.Lookup("cli-flags"))
 	_ = viper.BindPFlag("add_mode", f.Lookup("add"))
+	_ = viper.BindPFlag("assignment_mode", f.Lookup("assign-mode"))
 
 	rootCmd.AddCommand(swapCmd)
 }
@@ -94,7 +97,7 @@ var swapCmd = &cobra.Command{
 		time.Sleep(1 * time.Second)
 
 		// Relaunch with new CLI
-		newCmd := cliCmdFor(cfg, newType, dir)
+		newCmd := cliCmdFor(cfg, newType, dir, "")
 		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s --continue", dir, newCmd))
 		_ = tmux.SetPaneTitle(paneID, paneTitle(0, newType)) // 0 as dummy index
 
@@ -145,7 +148,7 @@ func validate(cfg *config.Config) error {
 			return fmt.Errorf("unknown CLI type %q — use claude, gemini, codex, or spare", cliName)
 		}
 		cliName, _ := parseWorker(cliType)
-		if cliName == "spare" {
+		if cliName == "spare" || cliName == "pm" {
 			continue
 		}
 		if _, err := exec.LookPath(cliName); err != nil {
@@ -177,6 +180,11 @@ func orchestrate(cfg *config.Config) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// Resolve TicketsDir to absolute so monitors and assignment helpers share one path.
+	if !filepath.IsAbs(cfg.TicketsDir) {
+		cfg.TicketsDir = filepath.Join(repoRoot, cfg.TicketsDir)
 	}
 
 	logPath := fmt.Sprintf("/tmp/claude-swarm-%s.log", cfg.Session)
@@ -213,9 +221,19 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		_ = tmux.KillSession(cfg.Session)
 	}
 
+	if containsCLIType(workers, "pm") {
+		if err := writePMPrompt(repoRoot); err != nil {
+			fmt.Printf("⚠️   Could not write PM prompt: %v\n", err)
+		}
+	}
+
 	worktreeDirs, err := createWorktrees(cfg, repoRoot, workers)
 	if err != nil {
 		return err
+	}
+
+	if cfg.AssignmentMode != "manual" {
+		assignTicketsToWorkers(cfg, workers, worktreeDirs)
 	}
 
 	fmt.Println("\n🚀  Launching tmux session…")
@@ -231,7 +249,7 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
-	nvimID, lgID, err := setupHubWindow(cfg, repoRoot)
+	nvimID, reviewID, err := setupHubWindow(cfg, repoRoot)
 	if err != nil {
 		return err
 	}
@@ -240,17 +258,24 @@ func startSwarm(cfg *config.Config, repoRoot string, workers []string, w io.Writ
 		return err
 	}
 
-	bindKeybindings(cfg, nvimID, lgID)
+	bindKeybindings(cfg, nvimID, reviewID)
 
-	return runAndMonitor(cfg, workers, worktreeDirs, paneIDs, w)
+	return runAndMonitor(cfg, repoRoot, workers, worktreeDirs, paneIDs, w)
 }
 
 // createWorktrees creates git worktrees for all workers and returns their dirs.
+// PM workers are not given a worktree; their dir is set to repoRoot.
 func createWorktrees(cfg *config.Config, repoRoot string, workers []string) ([]string, error) {
 	worktreeDirs := make([]string, len(workers))
 	// Clean stale administrative entries up front so branch deletion is accurate.
 	_ = git.Prune()
 	for i := 1; i <= len(workers); i++ {
+		cliName, _ := parseWorker(workers[i-1])
+		if cliName == "pm" {
+			worktreeDirs[i-1] = repoRoot
+			fmt.Printf("🤖  Worker %d → %s  (PM mode, runs in repo root)\n", i, repoRoot)
+			continue
+		}
 		dir := wtDir(repoRoot, cfg.WorktreePrefix, i)
 		branch := wtBranch(cfg.BaseBranch, i)
 		_ = git.RemoveWorktree(dir)
@@ -291,6 +316,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 			"#[fg=colour39]Alt+1#[fg=colour245]:agents  "+
 			"#[fg=colour39]Alt+2#[fg=colour245]:hub  "+
 			"#[fg=colour39]Alt+3#[fg=colour245]:usage  "+
+			"#[fg=colour39]Ctrl+b p#[fg=colour245]:review  "+
 			"#[fg=colour39]Ctrl+b g#[fg=colour245]:git  "+
 			"#[fg=colour39]Ctrl+b e#[fg=colour245]:editor  "+
 			"#[fg=colour39]Ctrl+b d#[fg=colour245]:detach  "+
@@ -384,16 +410,20 @@ func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]str
 	for i, paneID := range workerPaneIDs {
 		idx := i % len(workers)
 		_ = tmux.SetPaneTitle(paneID, paneTitle(i+1, workers[idx]))
-		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx], worktreeDirs[idx])))
+		ticketFile := ""
+		if _, err := os.Stat(filepath.Join(worktreeDirs[idx], "CURRENT_TICKET.md")); err == nil {
+			ticketFile = "CURRENT_TICKET.md"
+		}
+		_ = tmux.SendKeys(paneID, fmt.Sprintf("cd '%s' && %s", worktreeDirs[idx], cliCmdFor(cfg, workers[idx], worktreeDirs[idx], ticketFile)))
 	}
 	_ = tmux.SelectPane(topLeft)
 
 	return workerPaneIDs, nil
 }
 
-// setupHubWindow creates the "hub" window with editor (left) and git view (right).
-// Returns (editorPaneID, gitPaneID, error).
-func setupHubWindow(cfg *config.Config, repoRoot string) (editorPaneID, gitPaneID string, err error) {
+// setupHubWindow creates the "hub" window with editor (left) and review/git view (right).
+// Returns (editorPaneID, rightPaneID, error).
+func setupHubWindow(cfg *config.Config, repoRoot string) (editorPaneID, rightPaneID string, err error) {
 	if err = tmux.NewWindowNoIndex(cfg.Session, repoRoot, "hub"); err != nil {
 		return
 	}
@@ -403,21 +433,16 @@ func setupHubWindow(cfg *config.Config, repoRoot string) (editorPaneID, gitPaneI
 		return
 	}
 
-	gitPaneID, err = tmux.SplitWindowGetPaneID(editorPaneID, repoRoot, 50, true)
+	rightPaneID, err = tmux.SplitWindowGetPaneID(editorPaneID, repoRoot, 50, true)
 	if err != nil {
 		err = fmt.Errorf("splitting hub window: %w", err)
 		return
 	}
 
 	_ = tmux.SetPaneTitle(editorPaneID, "editor")
-	_ = tmux.SetPaneTitle(gitPaneID, "git")
+	_ = tmux.SetPaneTitle(rightPaneID, "review")
 	_ = tmux.SendKeys(editorPaneID, hubEditorCmd())
-
-	if commandExists("lazygit") {
-		_ = tmux.SendKeys(gitPaneID, "lazygit")
-	} else {
-		_ = tmux.SendKeys(gitPaneID, "git status -sb && echo && git log --graph --oneline --decorate -20 && exec bash")
-	}
+	_ = tmux.SendKeys(rightPaneID, hubRightPaneCmd(cfg))
 
 	_ = tmux.SelectPane(editorPaneID)
 	return
@@ -433,8 +458,33 @@ func hubEditorCmd() string {
 	return "echo 'nvim/code not found; editor pane is shell.' && exec bash"
 }
 
+func hubRightPaneCmd(cfg *config.Config) string {
+	mode := strings.ToLower(strings.TrimSpace(cfg.HubMode))
+	if mode == "git" {
+		if commandExists("lazygit") {
+			return "lazygit"
+		}
+		return "git status -sb && echo && git log --graph --oneline --decorate -20 && exec bash"
+	}
+
+	refreshSecs := cfg.ReviewRefreshSecs
+	if refreshSecs <= 0 {
+		refreshSecs = cfg.MonitorInterval
+	}
+	if refreshSecs <= 0 {
+		refreshSecs = 30
+	}
+	if commandExists("gh") {
+		return reviewWindowCommand(cfg.Session, refreshSecs)
+	}
+	if commandExists("lazygit") {
+		return "echo 'gh CLI not found; falling back to lazygit.' && lazygit"
+	}
+	return "echo 'gh CLI not found. Install gh and run: gh auth login' && git status -sb && exec bash"
+}
+
 // bindKeybindings sets session-scoped tmux keybindings.
-func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
+func bindKeybindings(cfg *config.Config, hubPaneID, rightPaneID string) {
 	// Alt+1 → swarm (agents), Alt+2 → hub
 	_ = tmux.BindKey(cfg.Session, "-n", "M-1",
 		fmt.Sprintf("select-window -t '%s:swarm'", cfg.Session))
@@ -460,13 +510,16 @@ func bindKeybindings(cfg *config.Config, hubPaneID, gitPaneID string) {
 	_ = tmux.BindKey(cfg.Session, "-n", "C-q",
 		fmt.Sprintf("kill-session -t '%s'", cfg.Session))
 
-	// Ctrl+b e → editor, Ctrl+b g → git
+	// Ctrl+b e → editor, Ctrl+b g/p → right pane (review/git)
 	_ = tmux.BindKey(cfg.Session, "", "e",
 		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
 			cfg.Session, hubPaneID))
 	_ = tmux.BindKey(cfg.Session, "", "g",
 		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
-			cfg.Session, gitPaneID))
+			cfg.Session, rightPaneID))
+	_ = tmux.BindKey(cfg.Session, "", "p",
+		fmt.Sprintf("run-shell \"tmux select-window -t '%s:hub' && tmux select-pane -t '%s'\"",
+			cfg.Session, rightPaneID))
 }
 
 func nvimBasicsPopupCommand() string {
@@ -474,13 +527,13 @@ func nvimBasicsPopupCommand() string {
 }
 
 // runAndMonitor attaches the tmux session, starts worker monitors, and handles post-detach cleanup.
-func runAndMonitor(cfg *config.Config, workers, worktreeDirs, paneIDs []string, w io.Writer) error {
+func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs, paneIDs []string, w io.Writer) error {
 	_ = tmux.SelectWindow(fmt.Sprintf("%s:swarm", cfg.Session))
 
 	fmt.Printf("✅  All %d instances launched!\n", len(workers))
 	fmt.Printf("🔍  Monitors active (log: /tmp/claude-swarm-%s.log)\n", cfg.Session)
 	fmt.Printf("📎  Attaching to session %q…\n", cfg.Session)
-	fmt.Println("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Agents: Alt+1")
+	fmt.Println("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Review: Ctrl+b p  |  Agents: Alt+1")
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -488,10 +541,10 @@ func runAndMonitor(cfg *config.Config, workers, worktreeDirs, paneIDs []string, 
 	for i, paneID := range paneIDs {
 		idx := i % len(workers)
 		cliName, _ := parseWorker(workers[idx])
-		if cliName == "spare" {
+		if cliName == "spare" || cliName == "pm" {
 			continue
 		}
-		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx], worktreeDirs[idx]), w)
+		go monitor.Watch(ctx, cfg, cfg.Session, paneID, i+1, cliCmdFor(cfg, workers[idx], worktreeDirs[idx], ""), worktreeDirs[idx], w)
 	}
 
 	attachCmd := exec.Command("tmux", "attach-session", "-t", cfg.Session)
@@ -503,7 +556,7 @@ func runAndMonitor(cfg *config.Config, workers, worktreeDirs, paneIDs []string, 
 	fmt.Println("\n🔴  Stopping monitors…")
 	cancel()
 
-	postDetachCleanup(worktreeDirs)
+	postDetachCleanup(repoRoot, worktreeDirs)
 	return nil
 }
 
@@ -546,16 +599,74 @@ func addWorkers(cfg *config.Config, repoRoot string, workers []string) error {
 			return fmt.Errorf("creating pane for worker %d: %w", i, err)
 		}
 		_ = tmux.SetPaneTitle(newPane, paneTitle(i, cliType))
-		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType, dir)))
+		_ = tmux.SendKeys(newPane, fmt.Sprintf("cd '%s' && %s", dir, cliCmdFor(cfg, cliType, dir, "")))
 	}
 
 	fmt.Printf("✅  Added %d worker(s) to session %q.\n", len(workers), cfg.Session)
 	return nil
 }
 
+// ── Ticket helpers ────────────────────────────────────────────────────────────
+
+const pmPrompt = `You are the Project Manager for this swarm. Your job: review ` + "`.swarm/tickets/`" + `, refine vague tickets, decompose large tasks into smaller tickets, and create new tickets using ` + "`claude-swarm ticket add`" + `. Do NOT write code. Focus on clarity and unblocking agents.`
+
+// writePMPrompt writes the PM system prompt to repoRoot/.swarm/PM_PROMPT.md.
+func writePMPrompt(repoRoot string) error {
+	dir := filepath.Join(repoRoot, ".swarm")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "PM_PROMPT.md"), []byte(pmPrompt), 0o644)
+}
+
+// assignTicketsToWorkers assigns the next N todo tickets to non-PM workers
+// and writes CURRENT_TICKET.md into each worktree.
+func assignTicketsToWorkers(cfg *config.Config, workers, worktreeDirs []string) {
+	store := ticket.NewStore(cfg.TicketsDir)
+
+	// Track which IDs we've already handed out this round to avoid double-assign.
+	assigned := make(map[string]bool)
+
+	for i, worker := range workers {
+		cliName, _ := parseWorker(worker)
+		if cliName == "spare" || cliName == "pm" {
+			continue
+		}
+		t, err := nextUnassigned(store, assigned)
+		if err != nil || t == nil {
+			break
+		}
+		workerName := fmt.Sprintf("worker-%d", i+1)
+		assigned[t.ID] = true
+		if err := store.Assign(t.ID, workerName); err != nil {
+			fmt.Printf("⚠️   Could not assign ticket %s to %s: %v\n", t.ID, workerName, err)
+			continue
+		}
+		if err := ticket.WriteCurrentTicket(worktreeDirs[i], t); err != nil {
+			fmt.Printf("⚠️   Could not write ticket %s to %s: %v\n", t.ID, worktreeDirs[i], err)
+			continue
+		}
+		fmt.Printf("🎫  Ticket %s → %s: %s\n", t.ID, workerName, t.Title)
+	}
+}
+
+// nextUnassigned returns the next todo ticket whose ID is not in the skip set.
+func nextUnassigned(store *ticket.Store, skip map[string]bool) (*ticket.Ticket, error) {
+	tickets, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tickets {
+		if t.Status == ticket.StatusTodo && !skip[t.ID] {
+			return t, nil
+		}
+	}
+	return nil, nil
+}
+
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
-func postDetachCleanup(worktreeDirs []string) {
+func postDetachCleanup(repoRoot string, worktreeDirs []string) {
 	fmt.Print("\n🧹  Remove worktrees and swarm branches? [Y/n] ")
 	reader := bufio.NewReader(os.Stdin)
 	answer, _ := reader.ReadString('\n')
@@ -565,6 +676,9 @@ func postDetachCleanup(worktreeDirs []string) {
 	}
 	if strings.EqualFold(answer, "y") {
 		for _, dir := range worktreeDirs {
+			if dir == repoRoot {
+				continue // PM worker — no worktree to remove
+			}
 			branch, _ := git.BranchOfWorktree(dir)
 			_ = git.RemoveWorktree(dir)
 			if branch != "" {
@@ -595,7 +709,7 @@ func parseWorker(s string) (cliName, model string) {
 func isSupportedCLIType(cliType string) bool {
 	cliName, _ := parseWorker(cliType)
 	switch cliName {
-	case "claude", "gemini", "codex", "spare":
+	case "claude", "gemini", "codex", "spare", "pm":
 		return true
 	default:
 		return false
@@ -728,10 +842,15 @@ func uniqueWorkerTypes(workers []string) []string {
 
 // cliCmdFor returns the full CLI invocation for a worker, including model and extra flags.
 // Worker may be "gemini:gemini-2.0-flash" or plain "claude".
-func cliCmdFor(cfg *config.Config, worker, worktreeDir string) string {
+// ticketFile is the filename of a ticket to load on startup (e.g. "CURRENT_TICKET.md"); empty means no ticket.
+func cliCmdFor(cfg *config.Config, worker, worktreeDir, ticketFile string) string {
 	cliName, model := parseWorker(worker)
-	if cliName == "spare" {
+	switch cliName {
+	case "spare":
 		return "echo 'Spare pane ready.' && exec bash"
+	case "pm":
+		promptPath := filepath.Join(worktreeDir, ".swarm", "PM_PROMPT.md")
+		return fmt.Sprintf(`claude --message "$(cat '%s')"`, promptPath)
 	}
 	cmd := cliName
 	if model != "" {
@@ -744,6 +863,9 @@ func cliCmdFor(cfg *config.Config, worker, worktreeDir string) string {
 		if home := geminiCLIHomeForWorktree(worktreeDir); home != "" {
 			cmd = fmt.Sprintf("GEMINI_CLI_HOME='%s' %s", home, cmd)
 		}
+	}
+	if ticketFile != "" {
+		cmd += fmt.Sprintf(` --message "$(cat '%s')"`, filepath.Join(worktreeDir, ticketFile))
 	}
 	return cmd
 }
