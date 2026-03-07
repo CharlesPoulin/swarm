@@ -864,13 +864,8 @@ func writePMBootstrap(repoRoot, taskPath, kanbanPath, focusPath string) error {
 		"## PM Focus",
 		string(focus),
 		"",
-		"## Project Overview",
+		"## Repo Context",
 		overview,
-		"",
-		"## First Actions",
-		"1) Summarize top priorities.",
-		"2) Identify unclear ticket(s) and propose concrete rewrites.",
-		"3) Propose next 1-3 tickets in execution order.",
 	}, "\n")
 
 	return os.WriteFile(filepath.Join(repoRoot, ".swarm", "PM_BOOTSTRAP.md"), []byte(content), 0o644)
@@ -916,10 +911,10 @@ func buildProjectOverview(repoRoot string) string {
 	}
 
 	out.WriteString("\nREADME excerpt:\n")
-	out.WriteString(readFileExcerpt(filepath.Join(repoRoot, "README.md"), 30, 3500))
+	out.WriteString(readFileExcerpt(filepath.Join(repoRoot, "README.md"), 80, 9000))
 
-	out.WriteString("\n\nCLAUDE excerpt:\n")
-	out.WriteString(readFileExcerpt(filepath.Join(repoRoot, "CLAUDE.md"), 35, 3500))
+	out.WriteString("\n\nAGENTS excerpt:\n")
+	out.WriteString(readFileExcerpt(filepath.Join(repoRoot, "AGENTS.md"), 80, 9000))
 
 	return out.String()
 }
