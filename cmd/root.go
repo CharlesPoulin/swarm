@@ -350,6 +350,7 @@ func applyStatusBar(cfg *config.Config, workers []string) {
 
 	statusOpts := [][2]string{
 		{"status", "on"},
+		{"mouse", "on"},
 		{"status-position", "top"},
 		{"status-style", "bg=colour235,fg=colour245"},
 		{"status-left", statusLeft},
@@ -415,30 +416,29 @@ func setupSwarmWindow(cfg *config.Config, workers, worktreeDirs []string) ([]pan
 		//  ├─────────────┼─────────────┤
 		//  │   worker-5  │   worker-6  │
 		//  └─────────────┴─────────────┘
-		topRight, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[workerIdxs[1]], 50, true)
-		if err != nil {
-			return nil, fmt.Errorf("creating top-right pane: %w", err)
+		topRight, splitErr := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[workerIdxs[1]], 50, true)
+		if splitErr == nil {
+			middleLeft, splitErr := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[workerIdxs[2]], 66, false)
+			if splitErr == nil {
+				bottomLeft, splitErr := tmux.SplitWindowGetPaneID(middleLeft, worktreeDirs[workerIdxs[4]], 50, false)
+				if splitErr == nil {
+					middleRight, splitErr := tmux.SplitWindowGetPaneID(topRight, worktreeDirs[workerIdxs[3]], 66, false)
+					if splitErr == nil {
+						bottomRight, splitErr := tmux.SplitWindowGetPaneID(middleRight, worktreeDirs[workerIdxs[5]], 50, false)
+						if splitErr == nil {
+							workerPaneIDs = []string{topLeft, topRight, middleLeft, middleRight, bottomLeft, bottomRight}
+						}
+					}
+				}
+			}
 		}
-		middleLeft, err := tmux.SplitWindowGetPaneID(topLeft, worktreeDirs[workerIdxs[2]], 66, false)
-		if err != nil {
-			return nil, fmt.Errorf("creating middle-left pane: %w", err)
+		if len(workerPaneIDs) == 0 {
+			fmt.Printf("⚠️   Fixed 2x3 swarm layout failed; falling back to tiled layout.\n")
 		}
-		bottomLeft, err := tmux.SplitWindowGetPaneID(middleLeft, worktreeDirs[workerIdxs[4]], 50, false)
-		if err != nil {
-			return nil, fmt.Errorf("creating bottom-left pane: %w", err)
-		}
-		middleRight, err := tmux.SplitWindowGetPaneID(topRight, worktreeDirs[workerIdxs[3]], 66, false)
-		if err != nil {
-			return nil, fmt.Errorf("creating middle-right pane: %w", err)
-		}
-		bottomRight, err := tmux.SplitWindowGetPaneID(middleRight, worktreeDirs[workerIdxs[5]], 50, false)
-		if err != nil {
-			return nil, fmt.Errorf("creating bottom-right pane: %w", err)
-		}
+	}
 
-		workerPaneIDs = []string{topLeft, topRight, middleLeft, middleRight, bottomLeft, bottomRight}
-	} else {
-		// Fallback for non-6 worker counts.
+	if len(workerPaneIDs) == 0 {
+		// Fallback for non-6 worker counts and tmux layouts that reject the fixed 2x3 split sequence.
 		workerPaneIDs = []string{topLeft}
 		for i := 1; i < len(workerIdxs); i++ {
 			newPane, splitErr := tmux.SplitWindowGetPaneID(fmt.Sprintf("%s:swarm", cfg.Session), worktreeDirs[workerIdxs[i]], 50, false)
@@ -579,6 +579,16 @@ func bindKeybindings(cfg *config.Config, hubPaneID, rightPaneID, pmWindowName st
 	_ = tmux.BindKey(cfg.Session, "-n", "M-5",
 		fmt.Sprintf("select-window -t '%s:dispatch'", cfg.Session))
 
+	// Alt+Arrow / Alt+h,j,k,l → move between panes in the current window.
+	_ = tmux.BindKey(cfg.Session, "-n", "M-Left", "select-pane -L")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-Right", "select-pane -R")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-Up", "select-pane -U")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-Down", "select-pane -D")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-h", "select-pane -L")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-l", "select-pane -R")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-k", "select-pane -U")
+	_ = tmux.BindKey(cfg.Session, "-n", "M-j", "select-pane -D")
+
 	// Ctrl+b v → nvim basics quick reference
 	_ = tmux.BindKey(cfg.Session, "", "v", nvimBasicsPopupCommand())
 
@@ -628,6 +638,7 @@ func runAndMonitor(cfg *config.Config, repoRoot string, workers, worktreeDirs []
 		pmHelp = "  |  PM: Alt+4"
 	}
 	fmt.Printf("    Detach: Ctrl+b d  |  Usage: Alt+3  |  Hub: Alt+2  |  Review: Ctrl+b p  |  Agents: Alt+1%s  |  Dispatch: Alt+5\n", pmHelp)
+	fmt.Println("    Pane move: click with mouse, or use Alt+Arrow / Alt+h,j,k,l")
 	fmt.Println()
 
 	ctx, cancel := context.WithCancel(context.Background())

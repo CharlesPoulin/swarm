@@ -139,10 +139,13 @@ func SplitWindowGetPaneID(target, cwd string, percent int, horizontal bool) (str
 	if horizontal {
 		args = append(args, "-h")
 	}
-	args = append(args, "-p", fmt.Sprintf("%d", percent), "-c", cwd)
-	out, err := exec.Command("tmux", args...).Output()
+	if percent > 0 {
+		args = append(args, "-l", fmt.Sprintf("%d%%", percent))
+	}
+	args = append(args, "-c", cwd)
+	out, err := exec.Command("tmux", args...).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("tmux split-window: %w", err)
+		return "", fmt.Errorf("tmux split-window %s: %w\n%s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
